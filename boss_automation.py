@@ -4,6 +4,7 @@ BossAutomation — 继承 BossScraper，增加点击/输入/聊天等交互能�
 """
 
 import json
+import logging
 import random
 import re
 import time
@@ -152,6 +153,9 @@ _merge_selectors()
 # ── 绝对上限 ──
 MAX_APPLY_PER_DAY = 50
 MAX_AUTO_REPLY_PER_DAY = 200
+
+
+log = logging.getLogger(__name__)
 
 
 class BossAutomation(BossScraper):
@@ -497,10 +501,19 @@ class BossAutomation(BossScraper):
 
             increment_daily_stat("applications_sent")
             print(f"  ✅ 投递成功")
+            log.info(
+                "apply_done",  # 结构化投递日志：成功
+                extra={"tool": "apply", "job_url": job_url, "application_id": app_id},
+            )
             return {"success": True, "message": "投递成功", "application_id": app_id}
 
         except Exception as e:
             print(f"  ❌ 投递失败: {e}")
+            log.warning(
+                "apply_fail",
+                exc_info=True,
+                extra={"tool": "apply", "job_url": job_url},
+            )
             return {"success": False, "message": str(e)}
 
     def apply_batch(
@@ -1574,6 +1587,7 @@ class BossAutomation(BossScraper):
         3. 对每个未读会话: 打开→读消息→存库→AI回复
         """
         result = {"checked": 0, "new_messages": 0, "replies_sent": 0}
+        log.info("monitor_cycle_start", extra={"tool": "monitor"})
 
         # 只在不在聊天页时才导航（避免每轮刷新页面，触发 BOSS 登录检查）
         current_url = self.page.url
@@ -1581,6 +1595,7 @@ class BossAutomation(BossScraper):
         if need_nav:
             if not self.navigate_to_chat():
                 print("  [监控] 导航到聊天页失败")
+                log.warning("monitor_nav_fail", extra={"tool": "monitor"})
                 return result
         else:
             # 已在聊天页，轻量点击「未读」Tab 即可
@@ -2003,4 +2018,13 @@ class BossAutomation(BossScraper):
             pause(0.5, 1)
 
         print(f"  [监控] 本轮完成: 消息 {result['new_messages']}, 回复 {result['replies_sent']}")
+        log.info(
+            "monitor_cycle_done",
+            extra={
+                "tool": "monitor",
+                "checked": result["checked"],
+                "new_messages": result["new_messages"],
+                "replies_sent": result["replies_sent"],
+            },
+        )
         return result

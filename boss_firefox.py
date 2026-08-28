@@ -621,12 +621,14 @@ class BossScraper:
                 and not self._login_prompt_visible()
             ):
                 print("✅ 登录成功")
+                log.info("login_success", extra={"tool": "login", "attempt_sec": i + 1})
                 logged_in = True
                 break
             last = url
             if i > 0 and i % 30 == 0:
                 print("  ⏳ %ds" % i)
         if not logged_in:
+            log.warning("login_timeout", extra={"tool": "login", "elapsed_sec": 600})
             raise TimeoutError("扫码登录超时或未确认进入已登录页面")
         state = self._ctx.storage_state()
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)

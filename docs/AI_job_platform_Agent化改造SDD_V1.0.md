@@ -231,7 +231,7 @@ class FlowLock:          # agent/flow_lock.py（新增）
 
 - **0.1 仓库初始化** ✅ 已完成（2026-08-28，commit e72a294 + 0737055）：旧 `.git`（雷达历史）改名 `.git.radar-backup` 留档 → `git init` → 审计 .gitignore（已确认覆盖 .boss_profile/.env）→ 建 GitHub 仓库 `AI_job_platform` → 基线 commit + 推送。
 - **0.2 密钥外移** ✅ 已完成（2026-08-28）：`ai_api_key` 读取改为 env 优先、settings 兜底；`.env.example` 更新；测试：不配置 env 且 settings 有旧值时仍可用，两者都有时 env 优先。附带：①声明 interview 运行时依赖（numpy/pymysql，uv sync 曾清掉未声明包）；②smart-send 半成品测试加 skip 标记（§2 已知半成品，45 个用例带原因跳过）；③ruff 门禁范围限定为新代码（存量雷达文件待 Phase 1.3 逐个纳入）。
-- **0.3 结构化日志基线**：`agent/log_config.py` JSON formatter + 脱敏 filter（key/wechat/手机号掩码单测）；给既有关键路径（登录、投递、监控循环）补日志点。
+- **0.3 结构化日志基线** ✅ 已完成（2026-08-28）：`agent/log_config.py` JSON formatter + 脱敏 filter（key/wechat/手机号掩码，13 个单测）；既有关键路径（登录 `login`、投递 `apply_to_job`、监控循环 `run_chat_monitor_cycle`）补结构化日志点。脱敏为纯函数不触碰 root logger（规避 pytest 捕获冲突）。
 
 ### Phase 1 · 数据层升级（§6 拆成 4 个 SDD 步）
 
@@ -294,6 +294,7 @@ class FlowLock:          # agent/flow_lock.py（新增）
 
 ## 11. 变更记录
 
+- 2026-08-28 V1.2.2（随 Step 0.3 提交）：①新增 `agent/log_config.py` 结构化 JSON 日志基线 + 脱敏（13 单测），脱敏为纯函数不触碰 root logger；②既有关键路径补结构化日志点（登录/投递/监控循环），legacy 模块用标准 `logging.getLogger`，应用入口装配后继承 JSON 输出。
 - 2026-08-28 V1.2.1（执行期备注，随 Step 0.2 提交）：①步骤完成情况在 §7 条目上以 ✅ 标记；②门禁定义细化——pytest 全量（含 skip）+ ruff 限新代码（存量雷达文件待 Phase 1.3 逐文件切换时逐个纳入 lint 范围，避免一步做两件事）；③smart-send 半成品测试加 skip 标记（§2）。
 - 2026-08-28 V1.2：①定稿按桌面软件规格开发——SQLite(WAL) 为最终数据库、进程内缓存、`SqliteSaver`，本期不交付任何 PG/Redis 内容（仅代码层预留 `DB_BACKEND` 通道）；②后台任务停止改为**用户手动点击停止按钮**（`POST /api/agent/tasks/{id}/stop` + dashboard 按钮），从 Agent 工具清单中移除 `stop_background_task`，Agent 不具备叫停自己后台任务的对话能力。
 - 2026-08-28 V1.1：①决策循环改用 LangGraph StateGraph（interrupt 审批 + checkpoint 断点恢复，用户决策）；②数据库改为双形态选型——桌面软件形态默认 SQLite(WAL)，服务形态可选 PostgreSQL，缓存桌面端用进程内 LRU + SQLite 表缓存、不引入 Redis。
