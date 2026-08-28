@@ -31,3 +31,6 @@ id_ecdsa*
 *.pfx
 secrets/
 .credentials/
+
+# Local-only backup of the original radar git history (never push)
+.git.radar-backup/
