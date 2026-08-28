@@ -48,13 +48,13 @@ def upgrade() -> None:
         sa.Column("hr_name", sa.Text(), nullable=True),
         sa.Column("hr_title", sa.Text(), nullable=True),
         sa.Column("description", sa.Text(), nullable=True),
-        sa.Column("status", sa.Text(), nullable=False),
+        sa.Column("status", sa.Text(), server_default="pending", nullable=False),
         sa.Column("greeting_text", sa.Text(), nullable=True),
         sa.Column("greeting_sent_at", sa.DateTime(), nullable=True),
         sa.Column("company_id", sa.Text(), nullable=True),
         sa.Column("brand_name", sa.Text(), nullable=True),
         sa.Column("hr_active_label", sa.Text(), nullable=True),
-        sa.Column("hr_active_days", sa.Integer(), nullable=False),
+        sa.Column("hr_active_days", sa.Integer(), server_default="-1", nullable=False),
         sa.Column("optimize_result", sa.Text(), nullable=True),
         sa.Column("optimize_at", sa.DateTime(), nullable=True),
         sa.Column("chat_suggestion_result", sa.Text(), nullable=True),
@@ -79,15 +79,23 @@ def upgrade() -> None:
         sa.Column("source_url", sa.Text(), nullable=True),
         sa.Column("fetched_at", sa.DateTime(), server_default=sa.text("(CURRENT_TIMESTAMP)"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("name", "company_id", name="uq_companies_name_company_id"),
     )
+    # 与存量 boss_state.init_db() 对齐：UNIQUE(name COLLATE NOCASE, company_id) + 两索引
+    op.create_index(
+        "uq_companies_name_company_id",
+        "companies",
+        [sa.text("name COLLATE NOCASE"), "company_id"],
+        unique=True,
+    )
+    op.create_index("idx_companies_name", "companies", [sa.text("name COLLATE NOCASE")], unique=False)
+    op.create_index("idx_companies_fetched_at", "companies", ["fetched_at"], unique=False)
     op.create_table(
         "daily_stats",
         sa.Column("date", sa.String(), nullable=False),
-        sa.Column("applications_sent", sa.Integer(), nullable=False),
-        sa.Column("messages_sent", sa.Integer(), nullable=False),
-        sa.Column("messages_received", sa.Integer(), nullable=False),
-        sa.Column("auto_replies_sent", sa.Integer(), nullable=False),
+        sa.Column("applications_sent", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("messages_sent", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("messages_received", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("auto_replies_sent", sa.Integer(), server_default="0", nullable=False),
         sa.PrimaryKeyConstraint("date"),
     )
     op.create_table(
@@ -158,15 +166,15 @@ def upgrade() -> None:
         sa.Column("last_message_text", sa.Text(), nullable=True),
         sa.Column("last_message_from", sa.Text(), nullable=True),
         sa.Column("last_message_at", sa.DateTime(), nullable=True),
-        sa.Column("unread_count", sa.Integer(), nullable=False),
-        sa.Column("status", sa.Text(), nullable=False),
-        sa.Column("auto_reply_enabled", sa.Integer(), nullable=False),
+        sa.Column("unread_count", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("status", sa.Text(), server_default="active", nullable=False),
+        sa.Column("auto_reply_enabled", sa.Integer(), server_default="1", nullable=False),
         sa.Column("interest_level", sa.Text(), nullable=True),
         sa.Column("hr_wechat", sa.Text(), nullable=True),
         sa.Column("wechat_shared_at", sa.DateTime(), nullable=True),
-        sa.Column("online_status", sa.Text(), nullable=False),
-        sa.Column("resume_sent", sa.Integer(), nullable=False),
-        sa.Column("phone_shared", sa.Integer(), nullable=False),
+        sa.Column("online_status", sa.Text(), server_default="", nullable=False),
+        sa.Column("resume_sent", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("phone_shared", sa.Integer(), server_default="0", nullable=False),
         sa.Column("salary", sa.Text(), nullable=True),
         sa.Column("city", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(), server_default=sa.text("(CURRENT_TIMESTAMP)"), nullable=False),
@@ -210,7 +218,7 @@ def upgrade() -> None:
         sa.Column("sender", sa.Text(), nullable=False),
         sa.Column("content", sa.Text(), nullable=False),
         sa.Column("delivery_status", sa.Text(), nullable=True),
-        sa.Column("ai_generated", sa.Integer(), nullable=False),
+        sa.Column("ai_generated", sa.Integer(), server_default="0", nullable=False),
         sa.Column("platform_time", sa.DateTime(), nullable=True),
         sa.Column("created_at", sa.DateTime(), server_default=sa.text("(CURRENT_TIMESTAMP)"), nullable=False),
         sa.ForeignKeyConstraint(
@@ -233,6 +241,9 @@ def downgrade() -> None:
     op.drop_table("shortlists")
     op.drop_table("settings")
     op.drop_table("daily_stats")
+    op.drop_index("idx_companies_fetched_at", table_name="companies")
+    op.drop_index("idx_companies_name", table_name="companies")
+    op.drop_index("uq_companies_name_company_id", table_name="companies")
     op.drop_table("companies")
     op.drop_table("applications")
     op.drop_table("agent_sessions")

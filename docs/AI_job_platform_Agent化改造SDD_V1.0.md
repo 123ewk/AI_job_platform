@@ -236,7 +236,7 @@ class FlowLock:          # agent/flow_lock.py（新增）
 ### Phase 1 · 数据层升级（§6 拆成 4 个 SDD 步）
 
 - **1.1 SQLAlchemy 模型 + Alembic 基座** ✅ 已完成（2026-08-28）：`db/models.py` 11 张表（7 存量逐字段对齐 + Agent 4 新表 agent_sessions/agent_steps/agent_tasks/approvals）；`db/base.py` 引擎工厂（SQLite WAL、`AI_PLATFORM_DB` 覆盖、预留 `DB_BACKEND`）；alembic 初始迁移 `9f808e900204`（env.py 复用 `db.base.get_engine` 统一 DB 来源，避免双处失配）。验收：`alembic upgrade head` 从零建表成功（11 业务表 + WAL）。补充：Agent 4 表字段本轮按 §4.1/§4.5 设计建模，状态机常量在 Step 2.1 补充。
-- **1.2 适配层 + 单测**：`boss_state_sa.py` 对齐 boss_state.py 全部公开函数签名；单测在 SQLite 上跑。验收：新旧两套对同一组用例行为一致。
+- **1.2 适配层 + 单测** ✅ 已完成（2026-08-28）：`db/boss_state_sa.py` 基于 SQLAlchemy 引擎，用 `exec_driver_sql` 逐字复用存量 SQL，对齐 boss_state.py 全部公开函数签名；差分单测 `tests/test_boss_state_sa.py` 对同一组 scenario 电池，新旧两套返回快照逐项相等（验收满足）。实现中发现并为行为一致修正了 §1.1 的两处 schema 偏差：①13 个 Python 侧 `default=` 改为存量 DDL 的库级 `server_default=`（否则适配层裸 SQL 省略默认列会 NOT NULL 违约被 INSERT OR IGNORE 吞掉）；②companies 表补 `UNIQUE(name COLLATE NOCASE, company_id)` + `idx_companies_name`/`idx_companies_fetched_at` 两索引（否则大小写不同公司 upsert 行为不一致）。同步修正 alembic 初始迁移。
 - **1.3 逐文件切换 import**：boss_app → boss_automation → boss_replier → boss_company，每个文件一个 commit，`DB_BACKEND` 开关控制。
 - **1.4 迁移 CLI + 冒烟**：`db/migrate_legacy.py` 幂等迁移真实数据（旧 schema → 新 schema）；验收：迁移后 dashboard 各页面数据与迁移前一致。
 
@@ -295,6 +295,7 @@ class FlowLock:          # agent/flow_lock.py（新增）
 ## 11. 变更记录
 
 - 2026-08-28 V1.2.3（随 Step 1.1 提交）：①建 `db/` 包（SQLAlchemy 2.0 声明式 + 引擎工厂）+ Alembic 初始迁移（11 表），DB 文件默认 `.boss_profile/boss_state_sa.db`（与存量 `boss_state.db` 分开，Step 1.4 迁移）；②`alembic/env.py` 不读 ini 的 url，改用 `db.base.get_engine()` 统一来源。③Agent 4 新表本轮建模，状态机常量留待 Step 2.1。
+- 2026-08-28 V1.2.4（随 Step 1.2 提交）：①新建 `db/boss_state_sa.py` 适配层——基于 SQLAlchemy 引擎用 `exec_driver_sql` 逐字复用存量 SQL，对齐 boss_state.py 全部公开函数签名与常量；②差分单测 `tests/test_boss_state_sa.py`（新旧两套对同一组 scenario 电池返回快照逐项相等）；③为行为一致修正 §1.1 模型 schema：13 个 Python 侧 default 改库级 server_default、companies 表补 UNIQUE(name COLLATE NOCASE, company_id) + idx_companies_name/idx_companies_fetched_at，同步 alembic 初始迁移。
 - 2026-08-28 V1.2.2（随 Step 0.3 提交）：①新增 `agent/log_config.py` 结构化 JSON 日志基线 + 脱敏（13 单测），脱敏为纯函数不触碰 root logger；②既有关键路径补结构化日志点（登录/投递/监控循环），legacy 模块用标准 `logging.getLogger`，应用入口装配后继承 JSON 输出。
 - 2026-08-28 V1.2.1（执行期备注，随 Step 0.2 提交）：①步骤完成情况在 §7 条目上以 ✅ 标记；②门禁定义细化——pytest 全量（含 skip）+ ruff 限新代码（存量雷达文件待 Phase 1.3 逐文件切换时逐个纳入 lint 范围，避免一步做两件事）；③smart-send 半成品测试加 skip 标记（§2）。
 - 2026-08-28 V1.2：①定稿按桌面软件规格开发——SQLite(WAL) 为最终数据库、进程内缓存、`SqliteSaver`，本期不交付任何 PG/Redis 内容（仅代码层预留 `DB_BACKEND` 通道）；②后台任务停止改为**用户手动点击停止按钮**（`POST /api/agent/tasks/{id}/stop` + dashboard 按钮），从 Agent 工具清单中移除 `stop_background_task`，Agent 不具备叫停自己后台任务的对话能力。

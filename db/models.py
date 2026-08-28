@@ -16,11 +16,12 @@ from sqlalchemy import (
     JSON,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
-    UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -48,14 +49,14 @@ class Application(Base):
     hr_name: Mapped[str | None] = mapped_column(Text)
     hr_title: Mapped[str | None] = mapped_column(Text)
     description: Mapped[str | None] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(Text, default="pending")
+    status: Mapped[str] = mapped_column(Text, server_default="pending")
     greeting_text: Mapped[str | None] = mapped_column(Text)
     greeting_sent_at: Mapped[datetime | None] = mapped_column(DateTime)
     # 公司去重 + HR 活跃度（CHANGES §1 §4）
     company_id: Mapped[str | None] = mapped_column(Text)
     brand_name: Mapped[str | None] = mapped_column(Text)
     hr_active_label: Mapped[str | None] = mapped_column(Text)
-    hr_active_days: Mapped[int] = mapped_column(Integer, default=-1)
+    hr_active_days: Mapped[int] = mapped_column(Integer, server_default="-1")
     # AI 24h 缓存（PR #3）
     optimize_result: Mapped[str | None] = mapped_column(Text)
     optimize_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -77,16 +78,16 @@ class Conversation(Base):
     last_message_text: Mapped[str | None] = mapped_column(Text)
     last_message_from: Mapped[str | None] = mapped_column(Text)
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime)
-    unread_count: Mapped[int] = mapped_column(Integer, default=0)
-    status: Mapped[str] = mapped_column(Text, default="active")
-    auto_reply_enabled: Mapped[int] = mapped_column(Integer, default=1)
+    unread_count: Mapped[int] = mapped_column(Integer, server_default="0")
+    status: Mapped[str] = mapped_column(Text, server_default="active")
+    auto_reply_enabled: Mapped[int] = mapped_column(Integer, server_default="1")
     # 后续 ALTER TABLE 追加
     interest_level: Mapped[str | None] = mapped_column(Text)
     hr_wechat: Mapped[str | None] = mapped_column(Text)
     wechat_shared_at: Mapped[datetime | None] = mapped_column(DateTime)
-    online_status: Mapped[str] = mapped_column(Text, default="")
-    resume_sent: Mapped[int] = mapped_column(Integer, default=0)
-    phone_shared: Mapped[int] = mapped_column(Integer, default=0)
+    online_status: Mapped[str] = mapped_column(Text, server_default="")
+    resume_sent: Mapped[int] = mapped_column(Integer, server_default="0")
+    phone_shared: Mapped[int] = mapped_column(Integer, server_default="0")
     salary: Mapped[str | None] = mapped_column(Text)
     city: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
@@ -101,7 +102,7 @@ class Message(Base):
     sender: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     delivery_status: Mapped[str | None] = mapped_column(Text)
-    ai_generated: Mapped[int] = mapped_column(Integer, default=0)
+    ai_generated: Mapped[int] = mapped_column(Integer, server_default="0")
     platform_time: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
 
@@ -118,10 +119,10 @@ class DailyStat(Base):
     __tablename__ = "daily_stats"
 
     date: Mapped[str] = mapped_column(String, primary_key=True)
-    applications_sent: Mapped[int] = mapped_column(Integer, default=0)
-    messages_sent: Mapped[int] = mapped_column(Integer, default=0)
-    messages_received: Mapped[int] = mapped_column(Integer, default=0)
-    auto_replies_sent: Mapped[int] = mapped_column(Integer, default=0)
+    applications_sent: Mapped[int] = mapped_column(Integer, server_default="0")
+    messages_sent: Mapped[int] = mapped_column(Integer, server_default="0")
+    messages_received: Mapped[int] = mapped_column(Integer, server_default="0")
+    auto_replies_sent: Mapped[int] = mapped_column(Integer, server_default="0")
 
 
 class Shortlist(Base):
@@ -139,7 +140,13 @@ class Shortlist(Base):
 
 class Company(Base):
     __tablename__ = "companies"
-    __table_args__ = (UniqueConstraint("name", "company_id", name="uq_companies_name_company_id"),)
+    # 与存量 `boss_state.init_db()` 对齐：UNIQUE(name COLLATE NOCASE, company_id) + 两索引，
+    # 保证 save_company_cache 的 upsert(ON CONFLICT NOCASE) 行为一致。
+    __table_args__ = (
+        Index("uq_companies_name_company_id", text("name COLLATE NOCASE"), "company_id", unique=True),
+        Index("idx_companies_name", text("name COLLATE NOCASE")),
+        Index("idx_companies_fetched_at", "fetched_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
