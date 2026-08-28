@@ -1,18 +1,16 @@
-import os
-from pathlib import Path
-import tempfile
-
 import sys
+import tempfile
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import boss_state
 from boss_state import (
     _normalize_company_name,
-    has_company_been_applied,
     add_application,
-    update_application_status,
     clean_open_positions,
+    has_company_been_applied,
+    update_application_status,
 )
 
 

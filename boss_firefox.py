@@ -30,8 +30,13 @@ from urllib.parse import quote_plus, urlencode
 
 from playwright.sync_api import sync_playwright
 
-# Windows 编码修复
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+# Windows 编码修复：仅当真实控制台非 UTF-8 时重包。
+# 无条件替换会在 pytest 捕获环境下替换掉捕获对象（其被 GC 后关闭），
+# 导致 pytest 收集阶段崩溃（I/O operation on closed file）。
+if (
+    getattr(sys.stdout, "encoding", "") or ""
+).lower().replace("-", "") != "utf8" and hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 # ── 配置 ──
 TODAY = date.today().isoformat()

@@ -5,12 +5,13 @@
 - 批改: DeepSeek API
 """
 
+import json
+import os
+import re
+from typing import List, Optional
+
 import httpx
 import numpy as np
-import json
-import re
-import os
-from typing import List, Optional
 
 # Ollama配置
 OLLAMA_BASE = "http://localhost:11434"
@@ -18,23 +19,39 @@ EMBED_MODEL = "nomic-embed-text"
 LLM_MODEL = "qwen2.5:14b"
 
 
-# AI配置（每次调用时从SQLite设置读取）
+# Step 0.2 密钥外移：AI_API_KEY 从 .env/环境变量读取，settings 表旧值兜底（迁移期兼容）
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_DOTENV_PATH = os.path.join(_PROJECT_ROOT, ".env")
+
+
 def _load_ai_config():
     cfg = {
         "api_key": "",
         "base_url": "https://api.deepseek.com",
         "model": "deepseek-chat",
     }
+    # 1) .env / 环境变量优先（python-dotenv 缺失时退化为只读进程环境变量）
     try:
-        import sys, os
+        from dotenv import load_dotenv
 
-        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        from boss_state import get_setting, get_db
+        load_dotenv(_DOTENV_PATH)
+    except Exception:
+        pass
+    env_key = os.environ.get("AI_API_KEY", "").strip()
+    if env_key:
+        cfg["api_key"] = env_key
+    # 2) settings 表兜底：存量用户的 key 还在库里；base_url/model 行为不变
+    try:
+        import sys
+
+        sys.path.insert(0, _PROJECT_ROOT)
+        from boss_state import get_db, get_setting
 
         get_db()
-        key = get_setting("ai_api_key")
-        if key:
-            cfg["api_key"] = key
+        if not env_key:
+            key = get_setting("ai_api_key")
+            if key:
+                cfg["api_key"] = key
         url = get_setting("ai_base_url")
         if url:
             cfg["base_url"] = url

@@ -32,6 +32,28 @@ lakejob = "lakejob_cli.cli:main"
 [tool.ruff]
 line-length = 120
 target-version = "py310"
+# 门禁范围：新代码（tests/ agent/ db/ interview/）全量 lint；
+# 雷达存量大文件存在历史 lint 债（从未跑过 lint），待 SDD Phase 1.3 逐文件
+# 切换数据层时再逐个纳入 lint 范围，避免"一步做两件事"。
+extend-exclude = [
+    "boss_app.py",
+    "boss_automation.py",
+    "boss_firefox.py",
+    "boss_replier.py",
+    "boss_company.py",
+    "boss_state.py",
+    "boss_geo.py",
+    "lakejob_cli",
+    # interview/ 仅 llm_client.py 在 lint 范围内（SDD 0.2 起有改动），其余为存量
+    "interview/batch_seed.py",
+    "interview/benchmark.py",
+    "interview/config.py",
+    "interview/db.py",
+    "interview/engine.py",
+    "interview/fast_qa.py",
+    "interview/main.py",
+    "interview/seed_data.py",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
