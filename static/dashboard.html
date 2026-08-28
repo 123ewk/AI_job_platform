@@ -1,0 +1,3018 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤝</text></svg>">
+<title>BOSS 直聘自动化控制台</title>
+<style>
+:root{
+  --accent:#0ea5e9;
+  --accent-2:#38bdf8;
+  --accent-3:#7dd3fc;
+  --accent-soft:rgba(14,165,233,.12);
+  --accent-soft-2:rgba(14,165,233,.06);
+  --accent-glow:rgba(14,165,233,.35);
+
+  --green:#22c55e;
+  --green-soft:rgba(34,197,94,.12);
+  --red:#ef4444;
+  --red-soft:rgba(239,68,68,.12);
+  --orange:#f59e0b;
+  --orange-soft:rgba(245,158,11,.12);
+  --blue:#3b82f6;
+  --blue-soft:rgba(59,130,246,.12);
+
+  --bg:#111318;
+  --bg-1:#161921;
+  --bg-2:#1c2029;
+  --bg-3:#232832;
+  --bg-4:#2c3240;
+
+  --border:#2a2f3a;
+  --border-2:#383e4c;
+  --border-strong:#4a5163;
+
+  --text:#f1f5f9;
+  --text-2:#94a3b8;
+  --text-3:#64748b;
+  --text-4:#475569;
+
+  --sidebar-bg:#111318;
+  --sidebar-active:rgba(14,165,233,.12);
+  --sidebar-border:rgba(255,255,255,.05);
+
+  --radius:8px;
+  --radius-sm:6px;
+  --radius-lg:12px;
+
+  --ease:cubic-bezier(.4,0,.2,1);
+  --ease-out:cubic-bezier(.16,1,.3,1);
+
+  --mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+}
+
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{
+  font-family:var(--font);
+  background:var(--bg);
+  color:var(--text);
+  font-size:14px;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+  font-variant-numeric:tabular-nums;
+  overflow:hidden;
+  background-image:
+    radial-gradient(800px 400px at 0% 0%,rgba(14,165,233,.04),transparent 60%),
+    radial-gradient(600px 300px at 100% 100%,rgba(14,165,233,.03),transparent 60%);
+  background-attachment:fixed;
+}
+
+*::-webkit-scrollbar{width:8px;height:8px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{background:#27272a;border-radius:4px;transition:background .2s}
+*::-webkit-scrollbar-thumb:hover{background:#3f3f46}
+.sidebar *::-webkit-scrollbar-thumb{background:rgba(255,255,255,.06)}
+.sidebar *::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.12)}
+
+.app{display:flex;height:100vh;overflow:hidden}
+
+/* ============ Sidebar ============ */
+.sidebar{
+  width:224px;
+  flex-shrink:0;
+  background:var(--sidebar-bg);
+  border-right:1px solid var(--border);
+  display:flex;
+  flex-direction:column;
+  padding:18px 12px 14px;
+  position:relative;
+}
+.sidebar-logo{
+  padding:0 8px 18px;
+  margin-bottom:16px;
+  border-bottom:1px solid var(--sidebar-border);
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+.sidebar-logo .logo-mark{
+  width:28px;height:28px;
+  border-radius:7px;
+  background:linear-gradient(135deg,var(--accent) 0%,#0284c7 100%);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:14px;
+  font-weight:800;
+  color:#fff;
+  box-shadow:0 4px 14px var(--accent-glow);
+  letter-spacing:-.04em;
+}
+.sidebar-logo .logo-text h1{
+  font-size:13px;
+  font-weight:600;
+  letter-spacing:-.01em;
+  color:var(--text);
+  line-height:1.2;
+}
+.sidebar-logo .logo-text div{
+  font-size:10.5px;
+  color:var(--text-3);
+  margin-top:2px;
+  font-family:var(--mono);
+  letter-spacing:.02em;
+}
+
+.sidebar-nav{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+.sidebar-nav a{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:8px 10px;
+  color:var(--text-2);
+  text-decoration:none;
+  font-size:13px;
+  font-weight:500;
+  cursor:pointer;
+  border-radius:var(--radius-sm);
+  transition:all .15s var(--ease);
+  position:relative;
+  border:1px solid transparent;
+}
+.sidebar-nav a:hover{
+  background:var(--bg-2);
+  color:var(--text);
+}
+.sidebar-nav a.active{
+  color:var(--text);
+  background:var(--sidebar-active);
+  border-color:rgba(14,165,233,.2);
+}
+.sidebar-nav a.active::after{
+  content:"";
+  position:absolute;
+  left:-12px;
+  top:50%;
+  transform:translateY(-50%);
+  width:3px;height:16px;
+  background:var(--accent);
+  border-radius:0 3px 3px 0;
+  box-shadow:0 0 8px var(--accent-glow);
+}
+.sidebar-nav a .icon{
+  font-size:14px;
+  width:18px;
+  text-align:center;
+  flex-shrink:0;
+  opacity:.8;
+  transition:opacity .15s;
+}
+.sidebar-nav a:hover .icon,
+.sidebar-nav a.active .icon{opacity:1}
+.sidebar-nav a .badge-count{
+  margin-left:auto;
+  font-size:10px;
+  font-weight:600;
+  padding:1px 6px;
+  border-radius:999px;
+  background:var(--accent);
+  color:#fff;
+  font-variant-numeric:tabular-nums;
+}
+
+.sidebar-status{
+  padding:12px 8px 0;
+  border-top:1px solid var(--sidebar-border);
+  margin-top:auto;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+.sidebar-status .row{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  font-size:11.5px;
+  color:var(--text-2);
+  padding:3px 4px;
+  border-radius:4px;
+}
+.dot{
+  width:6px;height:6px;
+  border-radius:50%;
+  flex-shrink:0;
+  position:relative;
+  background:#3f3f46;
+}
+.dot.on{
+  background:var(--green);
+  box-shadow:0 0 0 2px var(--green-soft);
+}
+.dot.on::after{
+  content:"";
+  position:absolute;
+  inset:-3px;
+  border-radius:50%;
+  background:var(--green);
+  opacity:.4;
+  animation:pulse 1.8s ease-out infinite;
+}
+.dot.warn{
+  background:var(--orange);
+  box-shadow:0 0 0 2px var(--orange-soft);
+}
+@keyframes pulse{
+  0%{transform:scale(.6);opacity:.5}
+  100%{transform:scale(2.2);opacity:0}
+}
+
+/* ============ Main ============ */
+.main{
+  flex:1;
+  overflow-y:auto;
+  background:transparent;
+  display:flex;
+  flex-direction:column;
+  min-width:0;
+}
+.main-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:14px 28px;
+  background:rgba(10,10,10,.6);
+  backdrop-filter:blur(12px) saturate(180%);
+  -webkit-backdrop-filter:blur(12px) saturate(180%);
+  border-bottom:1px solid var(--border);
+  position:sticky;
+  top:0;
+  z-index:50;
+  flex-shrink:0;
+}
+.main-header h2{
+  font-size:16px;
+  font-weight:600;
+  letter-spacing:-.01em;
+  color:var(--text);
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.main-header h2::before{
+  content:"";
+  width:3px;height:14px;
+  background:var(--accent);
+  border-radius:2px;
+  box-shadow:0 0 8px var(--accent-glow);
+}
+.main-header .header-meta{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  font-size:11.5px;
+  color:var(--text-3);
+  font-family:var(--mono);
+}
+.main-header .header-meta .sep{color:var(--text-4)}
+
+.tab-content{
+  padding:22px 28px 36px;
+  flex:1;
+}
+.tab{display:none;animation:tabIn .3s var(--ease-out)}
+.tab.active{display:block}
+@keyframes tabIn{
+  from{opacity:0;transform:translateY(6px)}
+  to{opacity:1;transform:translateY(0)}
+}
+
+/* ============ Buttons ============ */
+.btn{
+  padding:7px 13px;
+  border-radius:var(--radius-sm);
+  font-size:12.5px;
+  font-weight:500;
+  cursor:pointer;
+  border:1px solid var(--border);
+  background:var(--bg-2);
+  color:var(--text-2);
+  transition:all .12s var(--ease);
+  font-family:var(--font);
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  line-height:1.4;
+  position:relative;
+  user-select:none;
+  white-space:nowrap;
+}
+.btn:hover:not(:disabled){
+  background:var(--bg-3);
+  color:var(--text);
+  border-color:var(--border-2);
+}
+.btn:active:not(:disabled){transform:scale(.97)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-primary{
+  background:var(--accent);
+  color:#fff;
+  border-color:var(--accent);
+  box-shadow:0 1px 0 rgba(255,255,255,.1) inset,0 4px 12px rgba(14,165,233,.2);
+}
+.btn-primary:hover:not(:disabled){
+  background:var(--accent-2);
+  border-color:var(--accent-2);
+  box-shadow:0 1px 0 rgba(255,255,255,.15) inset,0 6px 16px rgba(14,165,233,.3);
+}
+.btn-success{
+  background:var(--green);
+  color:#fff;
+  border-color:var(--green);
+}
+.btn-success:hover:not(:disabled){
+  background:#16a34a;
+  border-color:#16a34a;
+}
+.btn-danger{
+  background:var(--red);
+  color:#fff;
+  border-color:var(--red);
+}
+.btn-danger:hover:not(:disabled){
+  background:#dc2626;
+  border-color:#dc2626;
+}
+.btn-ghost{
+  background:transparent;
+  border-color:transparent;
+}
+.btn-ghost:hover:not(:disabled){
+  background:var(--bg-2);
+  border-color:var(--border);
+}
+.btn-sm{padding:5px 10px;font-size:12px}
+.filter-btn-active{background:var(--accent)!important;color:#fff!important;border-color:var(--accent)!important;box-shadow:0 0 8px rgba(14,165,233,.3);}
+.btn-xs{padding:3px 8px;font-size:11px;border-radius:5px}
+.btn-icon{padding:6px;width:28px;height:28px;justify-content:center}
+
+/* ============ Search bar ============ */
+.search-shell{
+  background:var(--bg-1);
+  border:1px solid var(--border);
+  border-radius:var(--radius-lg);
+  margin-bottom:14px;
+  overflow:visible;
+}
+.search-row{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  padding:12px 14px;
+  align-items:center;
+  position:relative;
+}
+.search-row + .search-row{
+  border-top:1px solid var(--border);
+}
+.search-row.advanced{
+  background:var(--bg-1);
+  display:flex;
+  flex-wrap:wrap;
+}
+.search-toggle{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  font-size:12px;
+  color:var(--text-3);
+  cursor:pointer;
+  padding:6px 14px;
+  background:var(--bg-1);
+  border-top:1px solid var(--border);
+  user-select:none;
+  transition:color .12s;
+}
+.search-toggle:hover{color:var(--text-2)}
+.search-toggle .chev{
+  display:inline-block;
+  transition:transform .2s var(--ease);
+  font-size:10px;
+}
+.search-shell.expanded .search-toggle .chev{transform:rotate(90deg)}
+
+.search-input{
+  flex:1;
+  min-width:280px;
+  background:var(--bg-2);
+  border:1px solid var(--border);
+  padding:8px 12px;
+  color:var(--text);
+  font-size:13px;
+  outline:none;
+  font-family:var(--font);
+  border-radius:var(--radius-sm);
+  transition:all .12s var(--ease);
+}
+.search-input::placeholder{color:var(--text-3)}
+.search-input:hover{border-color:var(--border-2)}
+.search-input:focus{
+  border-color:var(--accent);
+  background:var(--bg);
+  box-shadow:0 0 0 3px var(--accent-soft);
+}
+.search-select{
+  background:var(--bg-2);
+  border:1px solid var(--border);
+  padding:8px 10px;
+  color:var(--text);
+  font-size:12px;
+  outline:none;
+  font-family:var(--font);
+  border-radius:var(--radius-sm);
+  cursor:pointer;
+  transition:all .12s var(--ease);
+  min-width:80px;
+  flex-shrink:0;
+}
+.search-select:hover{border-color:var(--border-2)}
+.search-select:focus{
+  border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-soft);
+}
+.city-dropdown{position:relative;min-width:100px;flex-shrink:0;}
+.city-trigger{
+  width:100%;display:flex;align-items:center;justify-content:space-between;gap:6px;
+  background:var(--bg-2);border:1px solid var(--border);padding:8px 10px;
+  color:var(--text);font-size:12px;font-family:var(--font);border-radius:var(--radius-sm);
+  cursor:pointer;transition:all .12s var(--ease);outline:none;
+  overflow:hidden;
+}
+#districtTriggerText{
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;
+}
+.city-trigger:hover{border-color:var(--border-2)}
+.city-trigger:focus,.city-dropdown.open .city-trigger{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+.city-arrow{font-size:10px;opacity:.5;transition:transform .2s;flex-shrink:0;}
+.city-dropdown.open .city-arrow{transform:rotate(180deg);}
+.city-panel{
+  display:none;position:fixed;z-index:9999;
+  width:224px;max-height:350px;overflow-y:auto;
+  background:var(--bg-1);border:1px solid var(--border);border-radius:var(--radius);
+  box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px 0;
+}
+.city-dropdown.open .city-panel{display:block;}
+.city-group-head{
+  display:flex;align-items:center;gap:6px;padding:7px 12px;font-size:12px;font-weight:600;
+  color:var(--text-2);cursor:pointer;user-select:none;transition:background .1s;
+}
+.city-group-head:hover{background:var(--bg-2);}
+.city-group-arrow{font-size:10px;transition:transform .2s;flex-shrink:0;width:12px;text-align:center;}
+.city-group.open .city-group-arrow{transform:rotate(90deg);}
+.city-group-body{display:none;padding:2px 0 4px;}
+.city-group.open .city-group-body{display:flex;flex-wrap:wrap;gap:2px;padding:2px 8px 6px;}
+.city-opt{
+  padding:5px 10px;font-size:12px;color:var(--text);cursor:pointer;border-radius:var(--radius-sm);
+  transition:all .1s;white-space:nowrap;position:relative;
+}
+.city-opt:hover{background:var(--accent);color:#fff;}
+.city-opt.active{background:var(--accent);color:#fff;font-weight:600;}
+.city-opt.selected{background:rgba(14,165,233,.18);color:var(--accent);font-weight:600;position:relative;}
+.city-opt.selected::after{content:'✓';position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:12px;}
+.city-opt-standalone{margin:2px 8px 6px;font-weight:500;}
+.search-actions{
+  display:flex;
+  gap:6px;
+  margin-left:auto;
+}
+
+/* ============ Toggle pill ============ */
+.toggle-pill{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  cursor:pointer;
+  user-select:none;
+  white-space:nowrap;
+  padding:6px 12px 6px 10px;
+  border:1px solid var(--border);
+  border-radius:999px;
+  background:var(--bg-2);
+  font-size:12px;
+  color:var(--text-2);
+  transition:all .15s var(--ease);
+}
+.toggle-pill:hover{border-color:var(--border-2);background:var(--bg-3)}
+.toggle-pill input[type=checkbox]{position:absolute;opacity:0;width:0;height:0}
+.toggle-track{
+  position:relative;
+  width:26px;height:14px;
+  background:#3f3f46;
+  border-radius:999px;
+  flex-shrink:0;
+  transition:background .2s var(--ease);
+}
+.toggle-thumb{
+  position:absolute;
+  top:2px;left:2px;
+  width:10px;height:10px;
+  background:#fff;
+  border-radius:50%;
+  transition:transform .2s var(--ease);
+  box-shadow:0 1px 2px rgba(0,0,0,.3);
+}
+.toggle-pill input:checked~.toggle-track{background:var(--accent)}
+.toggle-pill input:checked~.toggle-track .toggle-thumb{transform:translateX(12px)}
+.toggle-pill input:checked~.toggle-label{color:var(--accent)}
+.toggle-label{display:flex;align-items:center;gap:4px}
+.toggle-num{
+  width:32px;
+  padding:2px 4px;
+  font-size:11px;
+  border:1px solid var(--border);
+  border-radius:4px;
+  text-align:center;
+  background:var(--bg-2);
+  color:var(--text);
+  outline:none;
+  font-family:var(--mono);
+  transition:border-color .15s;
+}
+.toggle-num:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+
+/* ============ Stats grid ============ */
+.stats-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
+  gap:12px;
+  margin-bottom:16px;
+}
+.stat-card{
+  padding:14px 16px;
+  background:var(--bg-1);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  position:relative;
+  overflow:hidden;
+  transition:all .15s var(--ease);
+}
+.stat-card::before{
+  content:"";
+  position:absolute;
+  top:0;left:0;right:0;
+  height:1px;
+  background:linear-gradient(90deg,transparent,var(--accent),transparent);
+  opacity:0;
+  transition:opacity .2s;
+}
+.stat-card:hover{
+  border-color:var(--border-2);
+  background:var(--bg-2);
+}
+.stat-card:hover::before{opacity:.6}
+.stat-card .num{
+  font-size:26px;
+  font-weight:700;
+  letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums;
+  color:var(--text);
+  line-height:1.1;
+  font-family:var(--mono);
+}
+.stat-card .lbl{
+  font-size:11px;
+  color:var(--text-3);
+  margin-top:5px;
+  letter-spacing:.04em;
+  text-transform:uppercase;
+  font-weight:500;
+}
+
+/* ============ Job grid (two columns) ============ */
+.jobs-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(380px,1fr));
+  gap:12px;
+}
+.job-card{
+  padding:16px;
+  background:var(--bg-1);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  transition:all .15s var(--ease);
+  position:relative;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  animation:cardIn .35s var(--ease-out) backwards;
+}
+@keyframes cardIn{
+  from{opacity:0;transform:translateY(6px)}
+  to{opacity:1;transform:translateY(0)}
+}
+.job-card:nth-child(1){animation-delay:.02s}
+.job-card:nth-child(2){animation-delay:.04s}
+.job-card:nth-child(3){animation-delay:.06s}
+.job-card:nth-child(4){animation-delay:.08s}
+.job-card:nth-child(5){animation-delay:.1s}
+.job-card:nth-child(6){animation-delay:.12s}
+.job-card:nth-child(n+7){animation-delay:.14s}
+.job-card:hover{
+  border-color:var(--border-2);
+  background:var(--bg-2);
+  transform:translateY(-1px);
+  box-shadow:0 6px 20px -8px rgba(0,0,0,.4);
+}
+.job-card-head{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:10px;
+}
+.job-card .title{
+  font-size:14px;
+  font-weight:600;
+  letter-spacing:-.01em;
+  flex:1;
+  min-width:0;
+  line-height:1.4;
+}
+.job-card .title a{color:var(--text);text-decoration:none;transition:color .15s}
+.job-card .title a:hover{color:var(--accent)}
+.job-card .salary{
+  color:var(--accent-2);
+  font-weight:700;
+  font-size:13px;
+  font-family:var(--mono);
+  white-space:nowrap;
+  flex-shrink:0;
+}
+.job-card-body{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  font-size:12px;
+  color:var(--text-2);
+  align-items:center;
+}
+.job-card-body .company{
+  display:flex;
+  align-items:center;
+  gap:4px;
+  color:var(--text);
+  font-weight:500;
+}
+.job-card-body .meta-item{
+  display:inline-flex;
+  align-items:center;
+  gap:3px;
+  color:var(--text-3);
+  font-size:11.5px;
+}
+.job-card-body .meta-item::before{
+  content:"·";
+  margin-right:2px;
+  color:var(--text-4);
+}
+.job-card-body .meta-item:first-of-type::before{display:none}
+.job-card-foot{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding-top:10px;
+  border-top:1px solid var(--border);
+  gap:6px;
+}
+.job-card-foot .left{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.job-card-foot .right{display:flex;gap:5px;flex-shrink:0}
+
+/* ============ Badges ============ */
+.badge{
+  display:inline-flex;
+  align-items:center;
+  gap:3px;
+  padding:2px 7px;
+  border-radius:4px;
+  font-size:10.5px;
+  font-weight:500;
+  font-family:var(--mono);
+  letter-spacing:.02em;
+  border:1px solid transparent;
+}
+.badge-pending{background:var(--bg-3);color:var(--text-2);border-color:var(--border-2)}
+.badge-applied{background:var(--accent-soft);color:var(--accent-2);border-color:rgba(14,165,233,.25)}
+.badge-replied{background:var(--green-soft);color:#4ade80;border-color:rgba(34,197,94,.25)}
+.badge-skipped{background:var(--bg-3);color:var(--text-3);border-color:var(--border)}
+.badge-failed{background:var(--red-soft);color:#f87171;border-color:rgba(239,68,68,.25)}
+.badge-filtered{background:rgba(59,130,246,.15);color:#60a5fa;border-color:rgba(59,130,246,.3)}
+.badge-missing_url{background:var(--orange-soft);color:var(--orange);border-color:rgba(245,158,11,.25)}
+.badge-tag{
+  background:var(--bg-3);
+  color:var(--text-3);
+  border-color:var(--border);
+  font-family:var(--font);
+}
+.hr-tag{
+  display:inline-flex;
+  align-items:center;
+  gap:3px;
+  font-size:10.5px;
+  padding:2px 6px;
+  border-radius:4px;
+  font-family:var(--mono);
+}
+.hr-tag.green{color:#4ade80;background:var(--green-soft)}
+.hr-tag.orange{color:var(--orange);background:var(--orange-soft)}
+.hr-tag.red{color:#f87171;background:var(--red-soft)}
+.dup-warn{
+  color:var(--orange);
+  font-size:10.5px;
+  font-family:var(--mono);
+}
+
+/* ============ Table (applications tab) ============ */
+.table-wrap{
+  background:var(--bg-1);
+  border:1px solid var(--border);
+  border-radius:var(--radius-lg);
+  overflow:hidden;
+}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{
+  text-align:left;
+  padding:10px 14px;
+  border-bottom:1px solid var(--border);
+}
+th{
+  color:var(--text-3);
+  font-weight:500;
+  font-size:11px;
+  letter-spacing:.04em;
+  text-transform:uppercase;
+  background:var(--bg-1);
+  position:sticky;
+  top:0;
+  z-index:1;
+}
+tbody tr{transition:background .12s}
+tbody tr:hover{background:var(--bg-2)}
+tbody tr:last-child td{border-bottom:none}
+td a{color:var(--text);text-decoration:none;font-weight:500;transition:color .15s}
+td a:hover{color:var(--accent)}
+
+/* ============ Chat (WeChat-style) ============ */
+.chat-container{
+  display:flex;
+  height:72vh;
+  min-height:540px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-lg);
+  overflow:hidden;
+  background:var(--bg-1);
+}
+.chat-list{
+  width:260px;
+  border-right:1px solid var(--border);
+  overflow-y:auto;
+  background:var(--bg-1);
+  flex-shrink:0;
+  min-width:0;
+}
+.chat-list-item{
+  padding:12px 14px;
+  cursor:pointer;
+  border-bottom:1px solid var(--border);
+  transition:background .12s;
+  display:flex;
+  gap:10px;
+  align-items:center;
+  position:relative;
+  min-width:0;
+}
+.chat-list-item:hover{background:var(--bg-2)}
+.chat-list-item.active{background:var(--bg-2)}
+.chat-list-item.active::before{
+  content:"";
+  position:absolute;
+  left:0;top:6px;bottom:6px;
+  width:2px;
+  background:var(--accent);
+  border-radius:0 2px 2px 0;
+  box-shadow:0 0 6px var(--accent-glow);
+}
+.chat-avatar{
+  width:36px;height:36px;
+  border-radius:50%;
+  background:linear-gradient(135deg,var(--accent),#0284c7);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:#fff;
+  font-weight:600;
+  font-size:14px;
+  flex-shrink:0;
+  letter-spacing:-.02em;
+}
+.chat-list-item .info{flex:1;min-width:0;overflow:hidden}
+.chat-list-item .name-row{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:6px;
+  min-width:0;
+}
+.chat-list-item .name{
+  font-size:13px;
+  font-weight:600;
+  color:var(--text);
+  flex:1;
+  min-width:0;
+  display:flex;
+  align-items:center;
+  gap:6px;
+  overflow:hidden;
+}
+.chat-list-item .name .name-text{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  flex-shrink:1;
+  min-width:0;
+}
+.chat-list-item .name .job-inline{
+  font-size:11px;
+  font-weight:400;
+  color:var(--text-3);
+  flex-shrink:0;
+  white-space:nowrap;
+}
+.chat-list-item .name .reply-dot{
+  display:inline-block;
+  width:7px;height:7px;
+  border-radius:50%;
+  background:var(--red);
+  box-shadow:0 0 5px rgba(239,68,68,.5);
+  margin-left:5px;
+  vertical-align:middle;
+  flex-shrink:0;
+}
+.chat-list-item .preview{
+  font-size:12px;
+  color:var(--text-3);
+  margin-top:3px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.unread{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:16px;height:16px;
+  padding:0 4px;
+  border-radius:999px;
+  font-size:10px;
+  font-weight:700;
+  color:#fff;
+  background:var(--accent);
+  font-variant-numeric:tabular-nums;
+  box-shadow:0 0 6px var(--accent-glow);
+  flex-shrink:0;
+}
+.chat-pane{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  min-width:0;
+  background:
+    repeating-linear-gradient(45deg,transparent,transparent 30px,rgba(255,255,255,.01) 30px,rgba(255,255,255,.01) 31px);
+}
+.chat-header{
+  padding:12px 16px;
+  border-bottom:1px solid var(--border);
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+  background:rgba(10,10,10,.5);
+  backdrop-filter:blur(8px);
+  flex-shrink:0;
+  min-width:0;
+}
+.chat-header .header-left{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  min-width:0;
+  flex:1;
+  overflow:hidden;
+}
+.chat-header .header-left .info{
+  min-width:0;
+  overflow:hidden;
+  flex:1;
+}
+.chat-header .name{
+  font-weight:600;
+  font-size:14px;
+  color:var(--text);
+  display:flex;
+  align-items:center;
+  gap:8px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.chat-header .company{
+  font-size:11px;
+  color:var(--text-3);
+  margin-top:2px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.chat-header .header-right{
+  display:flex;
+  gap:6px;
+  flex-shrink:0;
+}
+.online-badge{
+  display:inline-block;
+  font-size:11px;
+  padding:1px 6px;
+  border-radius:4px;
+  margin-left:6px;
+  vertical-align:middle;
+  background:rgba(34,197,94,.15);
+  color:#4ade80;
+  font-weight:500;
+}
+.online-badge.offline{
+  background:rgba(107,114,128,.15);
+  color:#9ca3af;
+}
+.chat-header .name-row{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+}
+.chat-header .name{
+  font-size:14px;
+  font-weight:600;
+  color:var(--text);
+}
+.chat-header .company-tag{
+  font-size:12px;
+  color:var(--text-2);
+}
+.chat-header .title-tag{
+  font-size:12px;
+  color:var(--text-3);
+}
+.chat-header .title-tag::before{
+  content:'|';
+  margin-right:8px;
+  color:var(--border-2);
+}
+.chat-header .job-row{
+  font-size:12px;
+  color:var(--text-2);
+  margin-top:2px;
+}
+.chat-messages{
+  flex:1;
+  overflow-y:auto;
+  padding:20px 24px;
+  display:flex;
+  flex-direction:column;
+  gap:16px;
+  min-width:0;
+  position:relative;
+}
+.chat-messages.syncing{pointer-events:none;}
+.chat-messages.syncing .msg-row,
+.chat-messages.syncing .empty{filter:blur(6px);opacity:.4;transition:filter .3s,opacity .3s;}
+.sync-overlay{
+  position:absolute;inset:0;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;
+  z-index:10;background:rgba(0,0,0,.15);backdrop-filter:blur(2px);
+}
+.sync-overlay .spinner{width:28px;height:28px;border-width:3px;}
+.sync-overlay .sync-text{font-size:13px;color:var(--text-2);letter-spacing:.04em;}
+.msg-row{
+  display:flex;
+  gap:10px;
+  align-items:flex-start;
+  animation:msgIn .3s var(--ease-out) backwards;
+  min-width:0;
+  max-width:100%;
+}
+@keyframes msgIn{
+  from{opacity:0;transform:translateY(6px) scale(.97)}
+  to{opacity:1;transform:translateY(0) scale(1)}
+}
+.msg-row.hr{flex-direction:row}
+.msg-row.me{flex-direction:row-reverse}
+.msg-row > .msg-body{
+  min-width:0;
+  max-width:min(70%,640px);
+  display:flex;
+  flex-direction:column;
+  flex-shrink:1;
+}
+.msg-row.hr > .msg-body{align-items:flex-start}
+.msg-row.me > .msg-body{align-items:flex-end}
+.msg-avatar{
+  width:32px;height:32px;
+  border-radius:6px;
+  flex-shrink:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:#fff;
+  font-weight:600;
+  font-size:12px;
+}
+.msg-avatar.hr-av{background:linear-gradient(135deg,#52525b,#3f3f46)}
+.msg-avatar.me-av{background:linear-gradient(135deg,var(--accent),#0284c7)}
+.msg-avatar.ai-av{background:linear-gradient(135deg,#475569,#1e293b);position:relative}
+.msg-avatar.ai-av::after{
+  content:"AI";
+  position:absolute;
+  bottom:-4px;right:-4px;
+  font-size:8px;
+  background:var(--accent);
+  color:#fff;
+  padding:1px 3px;
+  border-radius:3px;
+  font-weight:700;
+  letter-spacing:.05em;
+}
+.msg-bubble{
+  max-width:100%;
+  padding:10px 14px;
+  font-size:14px;
+  line-height:1.55;
+  position:relative;
+  word-wrap:break-word;
+  overflow-wrap:break-word;
+}
+.msg-row.hr .msg-bubble{
+  background:var(--bg-2);
+  color:var(--text);
+  border:1px solid var(--border);
+  border-radius:4px 12px 12px 12px;
+}
+.msg-row.me .msg-bubble{
+  background:linear-gradient(135deg,var(--accent) 0%,#0284c7 100%);
+  color:#fff;
+  border-radius:12px 4px 12px 12px;
+  box-shadow:0 4px 12px rgba(14,165,233,.25);
+}
+.msg-row.me.ai .msg-bubble{
+  background:linear-gradient(135deg,#3f3f46,#27272a);
+  box-shadow:0 4px 12px rgba(0,0,0,.3);
+}
+.msg-meta{
+  font-size:10.5px;
+  color:var(--text-3);
+  margin-top:4px;
+  font-family:var(--mono);
+  letter-spacing:.02em;
+  padding:0 4px;
+}
+.chat-input-area{
+  padding:12px 16px;
+  border-top:1px solid var(--border);
+  display:flex;
+  gap:8px;
+  background:var(--bg-1);
+  flex-shrink:0;
+  align-items:flex-end;
+}
+.chat-input-area .btn-send{
+  height:40px;
+  padding:0 18px;
+  border-radius:8px;
+  font-size:14px;
+  font-weight:600;
+  white-space:nowrap;
+  flex-shrink:0;
+}
+.chat-input-area textarea{
+  flex:1;
+  border:1px solid var(--border);
+  padding:10px 14px;
+  color:var(--text);
+  font-size:14px;
+  resize:none;
+  outline:none;
+  min-height:38px;
+  max-height:120px;
+  font-family:var(--font);
+  border-radius:8px;
+  background:var(--bg-2);
+  transition:all .15s var(--ease);
+  min-width:0;
+}
+.chat-input-area textarea:focus{
+  border-color:var(--accent);
+  background:var(--bg);
+  box-shadow:0 0 0 3px var(--accent-soft);
+}
+
+/* ============ Settings ============ */
+.section{
+  background:var(--bg-1);
+  border:1px solid var(--border);
+  border-radius:var(--radius-lg);
+  padding:18px 20px;
+  margin-bottom:14px;
+  transition:border-color .15s;
+}
+.section:hover{border-color:var(--border-2)}
+.section h3{
+  font-size:11px;
+  font-weight:600;
+  margin-bottom:14px;
+  text-transform:uppercase;
+  letter-spacing:.06em;
+  color:var(--text-3);
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.section h3::before{
+  content:"";
+  width:3px;height:11px;
+  background:var(--accent);
+  border-radius:2px;
+}
+.setting-row{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-bottom:10px;
+}
+.setting-row:last-child{margin-bottom:0}
+.setting-row label{
+  width:110px;
+  font-size:12.5px;
+  color:var(--text-2);
+  flex-shrink:0;
+  font-weight:500;
+}
+.setting-row input,
+.setting-row textarea,
+.setting-row select{
+  flex:1;
+  border:1px solid var(--border);
+  padding:7px 11px;
+  color:var(--text);
+  font-size:13px;
+  outline:none;
+  font-family:var(--font);
+  border-radius:var(--radius-sm);
+  transition:all .15s var(--ease);
+  background:var(--bg-2);
+}
+.setting-row textarea{min-height:60px;resize:vertical;font-family:var(--mono);font-size:12px}
+#greetingTemplateRow textarea,#smartPromptRow textarea{height:110px}
+/* 只读提示词 textarea */
+.setting-row textarea[readonly]{background:var(--bg-3,#1a1a2e);opacity:.7;cursor:default;resize:none}
+.setting-textarea-wrap{flex:1;display:flex;flex-direction:column;gap:4px}
+.prompt-edit-btn{align-self:flex-end;font-size:12px;color:var(--accent);background:rgba(14,165,233,.08);border:1px solid rgba(14,165,233,.25);border-radius:4px;cursor:pointer;padding:3px 12px;transition:all .15s}
+.prompt-edit-btn:hover{background:rgba(14,165,233,.18);border-color:var(--accent)}
+.setting-row input:focus,
+.setting-row textarea:focus,
+.setting-row select:focus{
+  border-color:var(--accent);
+  background:var(--bg);
+  box-shadow:0 0 0 3px var(--accent-soft);
+}
+.setting-row select{cursor:pointer}
+
+/* ============ Pagination ============ */
+.pagination{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:4px;
+  margin-top:16px;
+}
+.pagination button{
+  min-width:32px;
+  padding:5px 10px;
+  background:var(--bg-1);
+  border:1px solid var(--border);
+  color:var(--text-2);
+  font-size:12px;
+  font-weight:500;
+  cursor:pointer;
+  border-radius:var(--radius-sm);
+  transition:all .12s var(--ease);
+  font-family:var(--mono);
+}
+.pagination button:hover:not(:disabled){
+  background:var(--bg-2);
+  color:var(--text);
+  border-color:var(--border-2);
+}
+.pagination button:disabled{opacity:.3;cursor:not-allowed}
+.pagination span{font-size:12px;color:var(--text-3);padding:0 10px;font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+.empty{
+  text-align:center;
+  padding:60px 20px;
+  color:var(--text-3);
+  font-size:13px;
+}
+.empty-icon{
+  font-size:32px;
+  opacity:.3;
+  margin-bottom:8px;
+}
+
+/* ============ Spinner ============ */
+.spinner{
+  display:inline-block;
+  width:14px;height:14px;
+  border:2px solid var(--border-2);
+  border-top-color:var(--accent);
+  border-radius:50%;
+  animation:spin .65s linear infinite;
+  vertical-align:middle;
+}
+.spinner-lg{width:28px;height:28px;border-width:3px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+#searchStatus,#applyProgress{font-size:13px;line-height:1.6;color:var(--text-2);margin-bottom:8px}
+
+/* ============ Modal ============ */
+.analyze-modal-overlay{
+  position:fixed;
+  top:0;left:0;right:0;bottom:0;
+  background:rgba(0,0,0,.7);
+  backdrop-filter:blur(8px);
+  -webkit-backdrop-filter:blur(8px);
+  z-index:999;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  animation:fadeIn .2s var(--ease-out);
+}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.analyze-modal-overlay .modal-box{
+  background:var(--bg-1);
+  border:1px solid var(--border-2);
+  border-radius:var(--radius-lg);
+  padding:22px;
+  max-width:560px;
+  width:90%;
+  max-height:82vh;
+  overflow-y:auto;
+  font-size:13px;
+  box-shadow:0 20px 60px -10px rgba(0,0,0,.6);
+  animation:modalIn .3s var(--ease-out);
+}
+@keyframes modalIn{
+  from{opacity:0;transform:translateY(20px) scale(.96)}
+  to{opacity:1;transform:translateY(0) scale(1)}
+}
+.confirm-modal .modal-box{
+  max-width:380px;
+  text-align:center;
+  padding:28px 24px 20px;
+}
+.confirm-modal .confirm-icon{
+  font-size:36px;
+  margin-bottom:12px;
+}
+.confirm-modal .confirm-title{
+  font-size:15px;
+  font-weight:700;
+  color:var(--text);
+  margin-bottom:6px;
+}
+.confirm-modal .confirm-desc{
+  font-size:12.5px;
+  color:var(--text-3);
+  margin-bottom:20px;
+  line-height:1.6;
+}
+.confirm-modal .confirm-actions{
+  display:flex;
+  gap:8px;
+  justify-content:center;
+}
+.confirm-modal .confirm-actions .btn{
+  min-width:90px;
+}
+/* ── 气泡确认提示 ── */
+.popover-confirm{
+  position:fixed;
+  z-index:9999;
+  background:var(--bg-1);
+  border:1px solid var(--border-2);
+  border-radius:var(--radius);
+  padding:10px 12px;
+  box-shadow:0 8px 24px rgba(0,0,0,.3);
+  animation:popoverIn .15s var(--ease-out);
+  display:inline-block;
+  max-width:280px;
+}
+.popover-confirm::before{
+  content:'';
+  position:absolute;
+  top:-5px;
+  right:12px;
+  width:8px;height:8px;
+  background:var(--bg-1);
+  border-top:1px solid var(--border-2);
+  border-left:1px solid var(--border-2);
+  transform:rotate(45deg);
+}
+@keyframes popoverIn{
+  from{opacity:0;transform:translateY(-4px)}
+  to{opacity:1;transform:translateY(0)}
+}
+.popover-confirm .pop-text{
+  font-size:12px;
+  color:var(--text-2);
+  margin-bottom:8px;
+  line-height:1.5;
+  text-align:right;
+  white-space:nowrap;
+}
+.popover-confirm .pop-actions{
+  display:flex;
+  gap:6px;
+  justify-content:flex-end;
+}
+.popover-confirm .pop-actions .btn{
+  padding:4px 10px;
+  font-size:11px;
+}
+.analyze-modal-overlay h3{margin:0;font-size:16px;font-weight:600;letter-spacing:-.01em}
+
+.hr-wechat-card{
+  padding:16px 0;
+  border-bottom:1px solid var(--border);
+}
+.hr-wechat-card:last-child{border-bottom:none}
+.hr-wechat-card .row{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:12px;
+}
+.hr-wechat-card .who{
+  font-weight:600;
+  font-size:13.5px;
+  color:var(--text);
+}
+.hr-wechat-card .desc{
+  font-size:12px;
+  color:var(--text-2);
+  margin:8px 0;
+  line-height:1.5;
+  background:var(--bg-2);
+  padding:10px 12px;
+  border-radius:var(--radius-sm);
+  border-left:2px solid var(--accent);
+}
+.hr-wechat-card .wxcode{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+}
+.hr-wechat-card code{
+  background:var(--bg-2);
+  padding:6px 12px;
+  border:1px solid var(--border);
+  font-size:13.5px;
+  color:var(--text);
+  display:inline-block;
+  border-radius:var(--radius-sm);
+  font-family:var(--mono);
+}
+.hr-wechat-card .meta{
+  font-size:10.5px;
+  color:var(--text-3);
+  text-align:right;
+  flex-shrink:0;
+  font-family:var(--mono);
+}
+
+/* ============ Progress bar ============ */
+.batch-progress{
+  background:var(--bg-3);
+  border-radius:999px;
+  height:8px;
+  overflow:hidden;
+  position:relative;
+  border:1px solid var(--border);
+}
+.batch-progress-bar{
+  background:linear-gradient(90deg,var(--accent),var(--accent-2));
+  height:100%;
+  transition:width .3s var(--ease);
+  position:relative;
+  border-radius:999px;
+}
+.batch-progress-bar::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.4),transparent);
+  animation:shimmer 1.6s linear infinite;
+}
+@keyframes shimmer{
+  0%{transform:translateX(-100%)}
+  100%{transform:translateX(100%)}
+}
+
+/* ============ Funnel bar ============ */
+.funnel-grid{
+  display:grid;
+  grid-template-columns:repeat(5,minmax(0,1fr));
+  gap:12px;
+  margin-bottom:16px;
+}
+.funnel-card{
+  padding:14px 16px;
+  background:var(--bg-1);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  position:relative;
+  overflow:hidden;
+  transition:all .15s var(--ease);
+}
+.funnel-card:hover{
+  border-color:var(--border-2);
+  background:var(--bg-2);
+}
+.funnel-card::before{
+  content:"";
+  position:absolute;
+  top:0;left:0;right:0;
+  height:1px;
+  background:linear-gradient(90deg,transparent,var(--accent),transparent);
+  opacity:.5;
+}
+.funnel-card .num{
+  font-size:24px;
+  font-weight:700;
+  letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums;
+  color:var(--text);
+  line-height:1.1;
+  font-family:var(--mono);
+}
+.funnel-card .lbl{
+  font-size:10.5px;
+  color:var(--text-3);
+  margin-top:5px;
+  letter-spacing:.04em;
+  text-transform:uppercase;
+  font-weight:500;
+}
+
+/* ============ Toast ============ */
+.toast-container{
+  position:fixed;
+  top:20px;
+  right:20px;
+  z-index:9999;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  pointer-events:none;
+}
+.toast{
+  background:var(--bg-2);
+  border:1px solid var(--border-2);
+  border-left:3px solid var(--accent);
+  padding:11px 16px;
+  border-radius:var(--radius);
+  font-size:13px;
+  color:var(--text);
+  min-width:240px;
+  max-width:380px;
+  pointer-events:auto;
+  box-shadow:0 10px 30px -5px rgba(0,0,0,.5);
+  animation:toastIn .3s var(--ease-out);
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+.toast .toast-icon{font-size:14px;flex-shrink:0}
+.toast.success{border-left-color:var(--green)}
+.toast.error{border-left-color:var(--red)}
+.toast.warning{border-left-color:var(--orange)}
+.toast.out{animation:toastOut .25s var(--ease) forwards}
+@keyframes toastIn{
+  from{opacity:0;transform:translateX(40px)}
+  to{opacity:1;transform:translateX(0)}
+}
+@keyframes toastOut{
+  to{opacity:0;transform:translateX(40px)}
+}
+
+/* ============ Status banner ============ */
+.status-banner{
+  padding:10px 14px;
+  background:var(--red-soft);
+  border:1px solid rgba(239,68,68,.2);
+  color:#fca5a5;
+  border-radius:var(--radius);
+  font-size:13px;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  animation:bannerIn .25s var(--ease-out);
+}
+@keyframes bannerIn{
+  from{opacity:0;transform:translateY(-4px)}
+  to{opacity:1;transform:translateY(0)}
+}
+.status-banner.success{background:var(--green-soft);border-color:rgba(34,197,94,.2);color:#86efac}
+
+/* ============ Mobile ============ */
+@media(max-width:768px){
+  .sidebar{width:56px;padding:14px 8px}
+  .sidebar-logo .logo-text,
+  .sidebar-nav a span:not(.icon),
+  .sidebar-nav a .badge-count,
+  .sidebar-status .row span:last-child{display:none}
+  .sidebar-nav a{justify-content:center;padding:8px 0}
+  .sidebar-logo{padding:0 0 14px;justify-content:center}
+  .main-header{padding:12px 16px}
+  .tab-content{padding:14px 16px 24px}
+  .chat-container{flex-direction:column;height:auto}
+  .chat-list{width:100%;max-height:200px;border-right:none;border-bottom:1px solid var(--border)}
+  .jobs-grid{grid-template-columns:1fr}
+  .funnel-grid{grid-template-columns:repeat(5,1fr)}
+  .stats-grid{grid-template-columns:repeat(2,1fr)}
+}
+
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-mark">B</div>
+      <div class="logo-text">
+        <h1>BOSS 自动化控制台</h1>
+        <div>v3.0 · job-radar</div>
+      </div>
+    </div>
+    <nav class="sidebar-nav" id="sideNav">
+      <a class="active" data-tab="search"><span class="icon">🔍</span><span>岗位搜索</span></a>
+      <a data-tab="applications"><span class="icon">📋</span><span>岗位列表</span></a>
+      <a data-tab="chat"><span class="icon">💬</span><span>聊天回复</span><span class="badge-count" id="navUnread" style="display:none;">0</span></a>
+      <a data-tab="wechat"><span class="icon">📱</span><span>微信记录</span></a>
+      <a data-tab="settings"><span class="icon">⚙️</span><span>设置</span></a>
+    </nav>
+    <div class="sidebar-status">
+      <div class="row"><span class="dot off" id="browserDot"></span><span>浏览器 <span id="browserStatus">未启动</span></span></div>
+      <div class="row"><span class="dot off" id="monitorDot"></span><span>监控网关 <span id="monitorStatus">未启动</span></span></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="main-header">
+      <h2 id="pageTitle">岗位搜索</h2>
+      <div class="header-meta">
+        <span id="metaTime"></span>
+        <span class="sep">·</span>
+        <span id="metaJobs">0 待投递</span>
+      </div>
+      <div style="display:flex;gap:6px;margin-left:auto;">
+        <button class="btn btn-success btn-sm" id="btnStart" onclick="startSystem()">启动浏览器</button>
+        <button class="btn btn-danger btn-sm" id="btnStop" onclick="stopSystem()" disabled>停止</button>
+      </div>
+    </div>
+
+    <div class="tab-content">
+
+    <!-- Tab 1: Search -->
+    <div class="tab active" id="tab-search">
+      <div class="search-shell" id="searchShell">
+        <div class="search-row" style="flex-wrap:wrap;align-items:center;">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;flex:1;">
+            <select id="searchSalary" class="search-select">
+              <option value="">薪资不限</option>
+              <option value="402">3K以下</option>
+              <option value="403">3-5K</option>
+              <option value="404">5-10K</option>
+              <option value="405">10-20K</option>
+              <option value="406">20-50K</option>
+              <option value="407">50K以上</option>
+            </select>
+            <select id="searchExperience" class="search-select">
+              <option value="">经验不限</option>
+              <option value="108">在校生</option>
+              <option value="102">应届生</option>
+              <option value="103">1年内</option>
+              <option value="104">1-3年</option>
+              <option value="105">3-5年</option>
+              <option value="106">5-10年</option>
+              <option value="107">10年以上</option>
+            </select>
+            <select id="searchDegree" class="search-select">
+              <option value="">学历不限</option>
+              <option value="209">初中及以下</option>
+              <option value="208">中专/中技</option>
+              <option value="206">高中</option>
+              <option value="202">大专</option>
+              <option value="203">本科</option>
+              <option value="204">硕士</option>
+              <option value="205">博士</option>
+            </select>
+            <select id="searchJobType" class="search-select">
+              <option value="">岗位类型</option>
+              <option value="1">全职</option>
+              <option value="2">兼职</option>
+              <option value="3">实习</option>
+            </select>
+            <select id="searchScale" class="search-select">
+              <option value="">公司规模</option>
+              <option value="301">0-20人</option>
+              <option value="302">20-99人</option>
+              <option value="303">100-499人</option>
+              <option value="304">500-999人</option>
+              <option value="305">1000-9999人</option>
+              <option value="306">10000人以上</option>
+            </select>
+            <select id="searchStage" class="search-select">
+              <option value="">融资阶段</option>
+              <option value="801">未融资</option>
+              <option value="802">天使轮</option>
+              <option value="803">A轮</option>
+              <option value="804">B轮</option>
+              <option value="805">C轮</option>
+              <option value="806">D轮及以上</option>
+              <option value="807">上市公司</option>
+              <option value="808">不需要融资</option>
+            </select>
+          </div>
+          <div class="city-dropdown" id="cityDropdown" style="margin-left:24px;flex-shrink:0;">
+            <button type="button" class="city-trigger" id="cityTrigger" onclick="toggleCityDropdown()">
+              <span id="cityTriggerText">全国</span><span class="city-arrow">▾</span>
+            </button>
+            <div class="city-panel" id="cityPanel">
+              <div class="city-group">
+                <div class="city-group-head" onclick="toggleCityGroup(this)"><span class="city-group-arrow">▸</span>热门城市</div>
+                <div class="city-group-body">
+                  <div class="city-opt" onclick="pickCity('北京')">北京</div><div class="city-opt" onclick="pickCity('上海')">上海</div><div class="city-opt" onclick="pickCity('广州')">广州</div><div class="city-opt" onclick="pickCity('深圳')">深圳</div>
+                  <div class="city-opt" onclick="pickCity('成都')">成都</div><div class="city-opt" onclick="pickCity('杭州')">杭州</div><div class="city-opt" onclick="pickCity('武汉')">武汉</div><div class="city-opt" onclick="pickCity('南京')">南京</div>
+                  <div class="city-opt" onclick="pickCity('重庆')">重庆</div><div class="city-opt" onclick="pickCity('长沙')">长沙</div><div class="city-opt" onclick="pickCity('天津')">天津</div><div class="city-opt" onclick="pickCity('佛山')">佛山</div>
+                  <div class="city-opt" onclick="pickCity('苏州')">苏州</div><div class="city-opt" onclick="pickCity('东莞')">东莞</div><div class="city-opt" onclick="pickCity('宁波')">宁波</div><div class="city-opt" onclick="pickCity('厦门')">厦门</div>
+                </div>
+              </div>
+              <div class="city-group">
+                <div class="city-group-head" onclick="toggleCityGroup(this)"><span class="city-group-arrow">▸</span>其他省会</div>
+                <div class="city-group-body">
+                  <div class="city-opt" onclick="pickCity('石家庄')">石家庄</div><div class="city-opt" onclick="pickCity('太原')">太原</div><div class="city-opt" onclick="pickCity('呼和浩特')">呼和浩特</div><div class="city-opt" onclick="pickCity('沈阳')">沈阳</div>
+                  <div class="city-opt" onclick="pickCity('长春')">长春</div><div class="city-opt" onclick="pickCity('哈尔滨')">哈尔滨</div><div class="city-opt" onclick="pickCity('合肥')">合肥</div><div class="city-opt" onclick="pickCity('福州')">福州</div>
+                  <div class="city-opt" onclick="pickCity('南昌')">南昌</div><div class="city-opt" onclick="pickCity('郑州')">郑州</div><div class="city-opt" onclick="pickCity('南宁')">南宁</div><div class="city-opt" onclick="pickCity('海口')">海口</div>
+                  <div class="city-opt" onclick="pickCity('贵阳')">贵阳</div><div class="city-opt" onclick="pickCity('昆明')">昆明</div><div class="city-opt" onclick="pickCity('拉萨')">拉萨</div><div class="city-opt" onclick="pickCity('兰州')">兰州</div>
+                  <div class="city-opt" onclick="pickCity('西宁')">西宁</div><div class="city-opt" onclick="pickCity('银川')">银川</div><div class="city-opt" onclick="pickCity('西安')">西安</div><div class="city-opt" onclick="pickCity('乌鲁木齐')">乌鲁木齐</div>
+                </div>
+              </div>
+              <div class="city-group">
+                <div class="city-group-head" onclick="toggleCityGroup(this)"><span class="city-group-arrow">▸</span>山东省</div>
+                <div class="city-group-body">
+                  <div class="city-opt" onclick="pickCity('济南')">济南</div><div class="city-opt" onclick="pickCity('青岛')">青岛</div><div class="city-opt" onclick="pickCity('淄博')">淄博</div><div class="city-opt" onclick="pickCity('潍坊')">潍坊</div>
+                  <div class="city-opt" onclick="pickCity('烟台')">烟台</div><div class="city-opt" onclick="pickCity('济宁')">济宁</div><div class="city-opt" onclick="pickCity('临沂')">临沂</div><div class="city-opt" onclick="pickCity('泰安')">泰安</div>
+                  <div class="city-opt" onclick="pickCity('威海')">威海</div><div class="city-opt" onclick="pickCity('东营')">东营</div><div class="city-opt" onclick="pickCity('滨州')">滨州</div><div class="city-opt" onclick="pickCity('菏泽')">菏泽</div>
+                  <div class="city-opt" onclick="pickCity('枣庄')">枣庄</div><div class="city-opt" onclick="pickCity('日照')">日照</div><div class="city-opt" onclick="pickCity('聊城')">聊城</div><div class="city-opt" onclick="pickCity('德州')">德州</div>
+                </div>
+              </div>
+              <div class="city-group">
+                <div class="city-group-head" onclick="toggleCityGroup(this)"><span class="city-group-arrow">▸</span>江苏省</div>
+                <div class="city-group-body">
+                  <div class="city-opt" onclick="pickCity('无锡')">无锡</div><div class="city-opt" onclick="pickCity('徐州')">徐州</div><div class="city-opt" onclick="pickCity('常州')">常州</div><div class="city-opt" onclick="pickCity('南通')">南通</div>
+                  <div class="city-opt" onclick="pickCity('连云港')">连云港</div><div class="city-opt" onclick="pickCity('淮安')">淮安</div><div class="city-opt" onclick="pickCity('盐城')">盐城</div><div class="city-opt" onclick="pickCity('扬州')">扬州</div>
+                  <div class="city-opt" onclick="pickCity('镇江')">镇江</div><div class="city-opt" onclick="pickCity('泰州')">泰州</div><div class="city-opt" onclick="pickCity('宿迁')">宿迁</div>
+                </div>
+              </div>
+              <div class="city-group">
+                <div class="city-group-head" onclick="toggleCityGroup(this)"><span class="city-group-arrow">▸</span>浙江省</div>
+                <div class="city-group-body">
+                  <div class="city-opt" onclick="pickCity('温州')">温州</div><div class="city-opt" onclick="pickCity('嘉兴')">嘉兴</div><div class="city-opt" onclick="pickCity('湖州')">湖州</div><div class="city-opt" onclick="pickCity('绍兴')">绍兴</div>
+                  <div class="city-opt" onclick="pickCity('金华')">金华</div><div class="city-opt" onclick="pickCity('衢州')">衢州</div><div class="city-opt" onclick="pickCity('舟山')">舟山</div><div class="city-opt" onclick="pickCity('台州')">台州</div>
+                  <div class="city-opt" onclick="pickCity('丽水')">丽水</div>
+                </div>
+              </div>
+              <div class="city-group">
+                <div class="city-group-head" onclick="toggleCityGroup(this)"><span class="city-group-arrow">▸</span>四川省</div>
+                <div class="city-group-body">
+                  <div class="city-opt" onclick="pickCity('绵阳')">绵阳</div><div class="city-opt" onclick="pickCity('德阳')">德阳</div><div class="city-opt" onclick="pickCity('宜宾')">宜宾</div><div class="city-opt" onclick="pickCity('南充')">南充</div>
+                  <div class="city-opt" onclick="pickCity('达州')">达州</div><div class="city-opt" onclick="pickCity('自贡')">自贡</div><div class="city-opt" onclick="pickCity('泸州')">泸州</div><div class="city-opt" onclick="pickCity('攀枝花')">攀枝花</div>
+                  <div class="city-opt" onclick="pickCity('广元')">广元</div><div class="city-opt" onclick="pickCity('乐山')">乐山</div><div class="city-opt" onclick="pickCity('内江')">内江</div><div class="city-opt" onclick="pickCity('遂宁')">遂宁</div>
+                  <div class="city-opt" onclick="pickCity('眉山')">眉山</div><div class="city-opt" onclick="pickCity('广安')">广安</div><div class="city-opt" onclick="pickCity('雅安')">雅安</div><div class="city-opt" onclick="pickCity('巴中')">巴中</div>
+                  <div class="city-opt" onclick="pickCity('资阳')">资阳</div><div class="city-opt" onclick="pickCity('凉山')">凉山</div><div class="city-opt" onclick="pickCity('甘孜')">甘孜</div><div class="city-opt" onclick="pickCity('阿坝')">阿坝</div>
+                </div>
+              </div>
+              <div class="city-group">
+                <div class="city-group-head" onclick="toggleCityGroup(this)"><span class="city-group-arrow">▸</span>湖南省</div>
+                <div class="city-group-body">
+                  <div class="city-opt" onclick="pickCity('株洲')">株洲</div><div class="city-opt" onclick="pickCity('湘潭')">湘潭</div><div class="city-opt" onclick="pickCity('衡阳')">衡阳</div><div class="city-opt" onclick="pickCity('邵阳')">邵阳</div>
+                  <div class="city-opt" onclick="pickCity('岳阳')">岳阳</div><div class="city-opt" onclick="pickCity('常德')">常德</div><div class="city-opt" onclick="pickCity('张家界')">张家界</div><div class="city-opt" onclick="pickCity('益阳')">益阳</div>
+                  <div class="city-opt" onclick="pickCity('郴州')">郴州</div><div class="city-opt" onclick="pickCity('永州')">永州</div><div class="city-opt" onclick="pickCity('怀化')">怀化</div><div class="city-opt" onclick="pickCity('娄底')">娄底</div>
+                  <div class="city-opt" onclick="pickCity('湘西')">湘西</div>
+                </div>
+              </div>
+              <div class="city-group">
+                <div class="city-group-head" onclick="toggleCityGroup(this)"><span class="city-group-arrow">▸</span>湖北省</div>
+                <div class="city-group-body">
+                  <div class="city-opt" onclick="pickCity('黄石')">黄石</div><div class="city-opt" onclick="pickCity('十堰')">十堰</div><div class="city-opt" onclick="pickCity('宜昌')">宜昌</div><div class="city-opt" onclick="pickCity('襄阳')">襄阳</div>
+                  <div class="city-opt" onclick="pickCity('鄂州')">鄂州</div><div class="city-opt" onclick="pickCity('荆门')">荆门</div><div class="city-opt" onclick="pickCity('孝感')">孝感</div><div class="city-opt" onclick="pickCity('荆州')">荆州</div>
+                  <div class="city-opt" onclick="pickCity('黄冈')">黄冈</div><div class="city-opt" onclick="pickCity('咸宁')">咸宁</div><div class="city-opt" onclick="pickCity('随州')">随州</div><div class="city-opt" onclick="pickCity('恩施')">恩施</div>
+                  <div class="city-opt" onclick="pickCity('仙桃')">仙桃</div><div class="city-opt" onclick="pickCity('潜江')">潜江</div><div class="city-opt" onclick="pickCity('天门')">天门</div><div class="city-opt" onclick="pickCity('神农架')">神农架</div>
+                </div>
+              </div>
+              <div class="city-group">
+                <div class="city-group-head" onclick="toggleCityGroup(this)"><span class="city-group-arrow">▸</span>江西省</div>
+                <div class="city-group-body">
+                  <div class="city-opt" onclick="pickCity('景德镇')">景德镇</div><div class="city-opt" onclick="pickCity('萍乡')">萍乡</div><div class="city-opt" onclick="pickCity('九江')">九江</div><div class="city-opt" onclick="pickCity('新余')">新余</div>
+                  <div class="city-opt" onclick="pickCity('鹰潭')">鹰潭</div><div class="city-opt" onclick="pickCity('赣州')">赣州</div><div class="city-opt" onclick="pickCity('吉安')">吉安</div><div class="city-opt" onclick="pickCity('宜春')">宜春</div>
+                  <div class="city-opt" onclick="pickCity('抚州')">抚州</div><div class="city-opt" onclick="pickCity('上饶')">上饶</div>
+                </div>
+              </div>
+              <div class="city-opt city-opt-standalone" onclick="pickCity('全国')">全国</div>
+            </div>
+            <input type="hidden" id="searchCity" value="全国">
+          </div>
+          <div class="city-dropdown" id="districtDropdown" style="margin-left:4px;flex-shrink:1;min-width:100px;max-width:min(360px,40vw);overflow:hidden;">
+            <button type="button" class="city-trigger" id="districtTrigger" onclick="toggleDistrictDropdown()">
+              <span id="districtTriggerText">区域不限</span><span class="city-arrow">▾</span>
+            </button>
+            <div class="city-panel" id="districtPanel" style="max-height:300px;overflow-y:auto;"></div>
+            <input type="hidden" id="searchDistrict" value="">
+          </div>
+        </div>
+        <div class="search-row" style="background:var(--bg-1);flex-wrap:wrap;align-items:center;">
+          <input type="hidden" id="searchKeyword" value="">
+          <span style="font-size:12px;color:var(--text-3);white-space:nowrap;font-weight:600;letter-spacing:.06em;text-transform:uppercase;">岗位名称搜索<br />英文逗号分隔</span>
+          <input type="text" id="setSearchKeywords" placeholder="例如：AI Agent,大模型开发,产品经理" class="search-input">
+          <button class="btn btn-primary" onclick="batchSearch(event)">一键搜索岗位🔍</button>
+        </div>
+        <div class="search-row" style="background:var(--bg-1);flex-wrap:wrap;">
+          <span style="font-size:12px;color:var(--text-3);white-space:nowrap;font-weight:600;letter-spacing:.06em;text-transform:uppercase;align-self:center;">岗位名称过滤<br />英文逗号分隔</span>
+          <input type="text" id="searchTitleBlacklist" placeholder="例如：销售,客服,外包,兼职" class="search-input" oninput="debounceSaveTitleFilter()">
+          <span style="font-size:11px;color:var(--text-3);align-self:center;">命中的岗位名称会被过滤<br />(可在岗位列表内查看)</span>
+        </div>
+        <div class="search-row" style="background:var(--bg-1);flex-wrap:wrap;align-items:center;">
+          <span style="font-size:12px;color:var(--text-3);white-space:nowrap;font-weight:600;letter-spacing:.06em;text-transform:uppercase;">福利标签筛选<br />英文逗号分隔 </span>
+          <input type="text" id="searchWelfare" placeholder="例如：五险一金,双休,带薪年假 ⚠️可能导致搜索结果不多" class="search-input">
+          <label class="toggle-pill" title="同一公司只投递一次">
+            <input type="checkbox" id="chkDedupCompany" checked onchange="saveSearchTogglesToSettings()">
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            <span class="toggle-label">公司去重</span>
+          </label>
+          <label class="toggle-pill" title="岗位超过多少天未活跃就跳过">
+            <input type="checkbox" id="chkFilterInactiveHr" checked onchange="saveSearchTogglesToSettings()">
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            <span class="toggle-label">跳过 <input type="number" id="inactiveDays" value="7" min="1" max="60" class="toggle-num"> 天未活跃岗位</span>
+          </label>
+          <button class="btn btn-success" onclick="batchApplyAll(1)">一键投递🗳️</button>
+          <button class="btn btn-ghost btn-sm" onclick="batchApplyAll(5)" title="多页扫描+投递">翻5页 ▸</button>
+        </div>
+      </div>
+
+      <div id="searchStatus"></div>
+      <div id="funnelBar" class="funnel-grid" style="display:none;"></div>
+      <div class="jobs-grid" id="jobsGrid"><div class="empty" style="grid-column:1/-1;"><div class="empty-icon">🔍</div>点击搜索获取岗位</div></div>
+    </div>
+
+    <!-- Tab 2: Applications -->
+    <div class="tab" id="tab-applications">
+      <div class="stats-grid">
+        <div class="stat-card"><div class="num" id="statTotalJobs">0</div><div class="lbl">列表岗位数</div></div>
+        <div class="stat-card"><div class="num" id="statToday">0</div><div class="lbl">列表投递数</div></div>
+        <div class="stat-card"><div class="num" id="statFiltered">0</div><div class="lbl">列表过滤数</div></div>
+      </div>
+      <div class="section" style="padding:16px 18px;">
+        <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
+          <button class="btn btn-sm filter-btn-active" id="appFilterAll" onclick="loadApplications('')">全部</button>
+          <button class="btn btn-sm" id="appFilterPending" onclick="loadApplications('pending')">待投递</button>
+          <button class="btn btn-sm" id="appFilterApplied" onclick="loadApplications('applied')">已投递</button>
+          <button class="btn btn-sm" id="appFilterReplied" onclick="loadApplications('replied')">需回复</button>
+          <button class="btn btn-sm" id="appFilterFiltered" onclick="loadApplications('filtered')">已过滤</button>
+          <button class="btn btn-sm" id="appFilterShortlist" onclick="loadShortlists()">收藏</button>
+          <button class="btn btn-sm btn-success" onclick="batchApplyPending(event)" style="margin-left:auto;">一键投递</button>
+          <button class="btn btn-sm btn-danger" onclick="confirmClearApplications()">清空列表</button>
+        </div>
+        <div id="applyProgress"></div>
+        <div class="table-wrap">
+          <table><thead><tr><th>岗位</th><th>公司</th><th>薪资</th><th>城市</th><th>状态</th><th>操作</th></tr></thead><tbody id="appTableBody"><tr><td colspan="6" class="empty">暂无数据</td></tr></tbody></table>
+        </div>
+        <div class="pagination" id="appPagination"></div>
+      </div>
+    </div>
+
+    <!-- Tab 3: Chat -->
+    <div class="tab" id="tab-chat">
+      <div class="chat-container">
+        <div class="chat-list">
+          <div id="conversationList" style="flex:1;overflow-y:auto;"><div class="empty"><div class="empty-icon">💬</div>暂无会话</div></div>
+        </div>
+        <div class="chat-pane">
+          <div class="chat-header" id="chatHeader">
+            <div class="header-left">
+              <div class="info">
+                <div class="name">选择会话</div>
+                <div class="company">点击左侧会话开始查看</div>
+              </div>
+            </div>
+            <div class="header-right">
+              <button class="btn btn-sm" id="btnAutoReplyToggle" onclick="toggleAutoReply()" disabled>暂停当前自动回复</button>
+            </div>
+          </div>
+          <div class="chat-messages" id="chatMessages"><div class="empty"><div class="empty-icon">💭</div>选择一个会话查看消息</div></div>
+          <div class="chat-input-area"><textarea id="chatInput" placeholder="输入消息..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendManualMessage();}"></textarea><button class="btn btn-sm btn-primary btn-send" id="btnManualSend" onclick="sendManualMessage()" disabled>发送</button></div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:14px;">
+        <div class="stats-grid" style="margin:0;flex:1;">
+          <div class="stat-card"><div class="num" id="chatStatReplied">0</div><div class="lbl">需要回复</div></div>
+          <div class="stat-card"><div class="num" id="chatStatInterview">0</div><div class="lbl">面试/微信</div></div>
+        </div>
+        <button class="btn btn-sm btn-danger" onclick="confirmClearConversations()">清空聊天</button>
+      </div>
+    </div>
+
+    <!-- Tab 4: Wechat -->
+    <div class="tab" id="tab-wechat">
+      <div class="section" style="padding:18px 20px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+          <h3 style="margin:0;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);">已获取的 HR 微信</h3>
+          <button class="btn btn-sm" onclick="loadWechatExchanges()">刷新</button>
+        </div>
+        <div id="wechatExchangesList"><div class="empty"><div class="empty-icon">📱</div>暂无微信记录</div></div>
+      </div>
+    </div>
+
+    <!-- Tab 5: Settings -->
+    <div class="tab" id="tab-settings">
+      <div class="section"><h3>AI 模型配置</h3>
+        <div class="setting-row"><label>平台</label><select id="setAIPlatform" onchange="onPlatformChange()"><option value="">-- 选择平台 --</option><option value="deepseek">DeepSeek</option><option value="openrouter">OpenRouter</option><option value="mimo">小米MiMo (Token Plan)</option><option value="custom">自定义</option></select></div>
+        <div class="setting-row"><label>API Key</label><input type="password" id="setAIApiKey" placeholder="输入API Key"><span id="aiKeyStatus" style="font-size:11px;margin-left:4px;"></span></div>
+        <div class="setting-row"><label>Base URL</label><input type="text" id="setAIBaseUrl" placeholder="自动填充"></div>
+        <div class="setting-row"><label>模型</label><input type="text" id="setAIModel" list="modelList" placeholder="选择或输入模型名" style="flex:1;"><datalist id="modelList"></datalist></div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:4px;font-family:var(--mono);">选择平台后自动填充Base URL和可选模型</div>
+      </div>
+
+      <div class="section"><h3>个人资料</h3>
+        <div class="setting-row"><label>所在城市</label><input type="text" id="setLocation" placeholder="如：深圳、北京、远程" onchange="saveLocationToSettings()"></div>
+        <div class="setting-row"><label>微信号</label><input type="text" id="setWechat" placeholder="AI 会在合适时机发给 HR"></div>
+        <div class="setting-row"><label>简历摘要</label><div class="setting-textarea-wrap"><textarea id="setResume" readonly placeholder="你的技能、项目经验……  AI 会在聊天中引用这些信息" rows="6"></textarea><button type="button" class="prompt-edit-btn" onclick="togglePromptEdit(this,'setResume')">修改</button></div></div>
+      </div>
+
+      <div class="section"><h3>招呼语</h3>
+        <div class="setting-row"><label>模式</label><select id="setGreetingMode" onchange="toggleGreetingRows()"><option value="template">固定模板</option><option value="smart">智能生成（自动注入个人资料，失败回退固定模板）</option></select></div>
+        <div id="greetingTemplateRow" class="setting-row"><label>固定招呼语</label><div class="setting-textarea-wrap"><textarea id="setGreeting" rows="6" readonly placeholder="{job_title} 会被替换为实际岗位名"></textarea><button type="button" class="prompt-edit-btn" onclick="togglePromptEdit(this,'setGreeting')">修改</button></div></div>
+        <div id="smartPromptRow" class="setting-row" style="display:none"><label>招呼语提示词</label><div class="setting-textarea-wrap"><textarea id="setSmartGreetingPrompt" rows="6" readonly ></textarea><button type="button" class="prompt-edit-btn" onclick="togglePromptEdit(this,'setSmartGreetingPrompt')">修改</button></div></div>
+      </div>
+
+      <div class="section"><h3>高级设置</h3>
+        <a href="javascript:void(0)" onclick="document.getElementById('advancedSettings').style.display=document.getElementById('advancedSettings').style.display==='none'?'block':'none';this.textContent=document.getElementById('advancedSettings').style.display==='none'?'展开 ▼':'收起 ▲'" style="font-size:12px;color:var(--accent);">展开 ▼</a>
+        <div id="advancedSettings" style="display:none;margin-top:12px;">
+
+          <div class="setting-row"><label>每日投递上限(50)</label><input type="number" id="setDailyLimit" value="15" min="1" max="50"></div>
+          <div class="setting-row"><label>AI 自动回复</label><select id="setAutoReply"><option value="true">开启</option><option value="false">关闭</option></select></div>       
+          <div class="setting-row"><label>AI 回复风格</label><select id="setStyle"><option value="professional">专业</option><option value="casual">轻松</option><option value="enthusiastic">热情</option></select></div>
+          <div class="setting-row"><label>回复间隔(秒)<br />(10-20/300-600)</label><div style="display:flex;gap:6px;flex:1;align-items:center;"><input type="number" id="setMinDelay" value="30" min="10" max="300" style="flex:1;"><span style="color:var(--text-3);">—</span><input type="number" id="setMaxDelay" value="120" min="20" max="600" style="flex:1;"></span></div></div>
+          <div class="setting-row"><label>会话冷却(秒)<br />(10-600)</label><input type="number" id="setConversationCooldown" value="60" min="10" max="600"></div>
+          <div class="setting-row"><label>回复系统提示词<br />⚠️谨慎修改</label><div class="setting-textarea-wrap"><textarea id="setReplyRules" rows="10" readonly placeholder="修改后点击保存设置即可生效"></textarea><button type="button" class="prompt-edit-btn" onclick="togglePromptEdit(this,'setReplyRules')">修改</button></div></div>
+        </div>
+      </div>
+
+      <div class="section"><h3>系统</h3>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-primary" id="btnSaveSettings" onclick="saveSettings()">保存设置</button>
+          <button class="btn btn-sm" onclick="doRelogin()">重新扫码登录</button>
+          <span id="sessionStatus" style="font-size:10.5px;color:var(--text-3);line-height:26px;font-family:var(--mono);"></span>
+          <span style="flex:1"></span>
+          <button class="btn btn-sm btn-danger" onclick="confirmRestoreDefaults()">恢复默认值</button>
+        </div>
+      </div>
+    </div>
+
+    </div>
+  </main>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+let activeTab='search',activeConvId=null,ws=null,conversations=[],currentSearchJobs=[],searchInFlight=false,sessionSearchPending=0,sessionSearchApplied=0,sessionSearchFiltered=0,clearApiKeyFlag=false;
+
+// 默认值（与用户数据库 settings 保持一致）
+const DEFAULT_RESUME_SUMMARY = `【岗位经验】
+【核心技能】
+【项目亮点】
+【学历/证书】
+【其他优势】`;
+const DEFAULT_GREETING_TEMPLATE = `您好！看到贵司在招{job_title}，我很感兴趣。`;
+const DEFAULT_SMART_GREETING_PROMPT = `以求职者身份帮我生成一条150字以内的打招呼语给招聘方，要求：
+1. 突出我与岗位JD匹配的能力，如跨度较大就突出我的学习能力与转行态度
+2. 直接以"你好"开头，禁止出现任何名称代词或占位符，如 XX 或 **
+3. 最后说明在线简历不够完整，想要一个发送个人简历的机会
+4. 除了打招呼语以外不生成其他内容，方便直接发送`;
+const DEFAULT_REPLY_PROMPT = `你是一个求职者开发的AI助手，在求职平台上帮他自动与招聘方沟通。
+
+## 核心身份
+- 坦诚告诉对方你是AI助手，由求职者本人开发
+- 这个AI工具本身就是求职者技术能力的证明
+- 如果对方感兴趣，求职者本人会亲自跟进
+
+## 求职者背景（动态适配）
+- 根据对方发布的招聘岗位来匹配你的回复侧重点
+- 不要硬套万能模板，按照岗位信息回复：如果对方招的是AI产品经理，就围绕AI产品方向聊
+- 绝不要编造岗位不存在的信息，也不要提到与对方招聘岗位无关的东西
+
+## 回复原则
+- 2-4句话，自然真诚、不生硬
+- 围绕对方发布的岗位信息（岗位名、公司、JD）来回复
+- 主动了解对方岗位的具体要求、工作内容、团队情况等
+- 回答技术问题时给出专业、具体的内容
+- 不承诺薪资、入职时间、面试时间——表示这些后续可以和本人聊
+- 不要重复寒暄，不要重复自我介绍
+
+## 面试处理（重要）
+- 绝对不要替求职者答应、承诺面试、给具体时间等
+- 当对方说"来面试""方便面试吗""什么时候过来"等邀请时，先引导加微信：
+  "感谢邀请！方便的话可以先加微信聊聊，让求职者本人跟您沟通会更好，面试的事你们定"这类话即可
+
+## 触发发送规则（重要）
+系统会根据对方的消息内容自动执行以下操作，你只需要在回复中适当提及即可：
+
+### 简历发送
+- 当对方要求"发简历""看看简历""CV""作品集"时，系统会自动通过BOSS官方「发简历」按钮发送附件简历
+- 你只需要回复"已发送简历给您，请查收"即可
+- 绝对不要说"我这边不存储简历""没有简历文件"之类的话
+
+### 微信交换
+- 当对方请求"加微信""微信聊""加个v""换微信"时，系统会自动通过BOSS官方「换微信」按钮分享求职者微信
+- 你只需要回复"已通过BOSS发您"这类话即可
+- 绝对不要在回复里出现"微信""WeChat""VX""微信号"这些词，BOSS平台会过滤
+
+### 电话交换
+- 当对方请求"电话""手机号"时，系统会自动通过BOSS官方「换电话」按钮分享求职者电话
+- 你只需要回复"电话已发您，请查收"即可
+
+### 重要提醒
+- 不要在HR没有要求的情况下主动说"已发送"
+- 不要重复说"已发送"，如果之前已经发过，就不再提
+- 这些操作会在你回复之前执行，所以你说"已发送"时东西确实已经发出去了
+
+## 输出格式（严格JSON）
+{"reply": "你的回复内容", "interest": "high/medium/low"}
+
+interest 评估标准（根据完整对话判断对方当前兴趣程度）：
+- high: 对方问了能力细节、项目经历、面试时间、要微信、表达明确合作意向
+- medium: 配合沟通、说"方便""可以""好的""聊聊"等、发岗位内容、问基本情况
+- low: 简单打招呼、摸底试探、回复敷衍、未表现出进一步了解的意愿`;
+
+function switchTab(tab){
+  activeTab=tab;
+  document.querySelectorAll('#sideNav a').forEach(a=>a.classList.toggle('active',a.dataset.tab===tab));
+  document.querySelectorAll('.tab').forEach(t=>{
+    const on=t.id==='tab-'+tab;
+    if(on){t.style.animation='none';t.offsetHeight;t.style.animation='';t.classList.add('active');}
+    else{t.classList.remove('active');}
+  });
+  document.getElementById('pageTitle').textContent={search:'岗位搜索',applications:'岗位列表',chat:'聊天回复',wechat:'微信记录',settings:'设置'}[tab]||'';
+  if(tab==='applications'){loadApplications();refreshStatus();}
+  if(tab==='chat')loadConversations();
+  if(tab==='wechat'){loadWechatExchanges();startWechatAutoRefresh();}else{stopWechatAutoRefresh();}
+}
+document.querySelectorAll('#sideNav a').forEach(a=>a.addEventListener('click',()=>switchTab(a.dataset.tab)));
+
+document.addEventListener('click',e=>{
+  let b=e.target.closest('[data-action="apply"]');if(b){applyOne(b.dataset.url,b);return;}
+  b=e.target.closest('[data-action="skip"]');if(b)skipJob(b.dataset.id);
+});
+connectWS();loadSettings();refreshStatus();tickClock();
+
+/* ===== Header clock ===== */
+function tickClock(){
+  const el=document.getElementById('metaTime');
+  if(!el)return;
+  const d=new Date();
+  const pad=n=>String(n).padStart(2,'0');
+  el.textContent=`${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  setTimeout(tickClock,1000);
+}
+
+/* ===== Toast ===== */
+function toast(message, type='info', duration=2800){
+  const container=document.getElementById('toastContainer');
+  const el=document.createElement('div');
+  el.className='toast '+type;
+  const icon=type==='success'?'✓':type==='error'?'✕':type==='warning'?'!':'ℹ';
+  el.innerHTML='<span class="toast-icon">'+icon+'</span><span>'+esc(message)+'</span>';
+  container.appendChild(el);
+  setTimeout(()=>{
+    el.classList.add('out');
+    setTimeout(()=>el.remove(),250);
+  },duration);
+}
+
+/* ===== Animated number ===== */
+function animateNumber(el, target, duration=600){
+  if(!el)return;
+  const start=parseFloat(el.textContent)||0;
+  const end=parseFloat(target)||0;
+  if(start===end)return;
+  const t0=performance.now();
+  function tick(now){
+    const p=Math.min(1,(now-t0)/duration);
+    const eased=1-Math.pow(1-p,3);
+    el.textContent=Math.round(start+(end-start)*eased);
+    if(p<1)requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+function connectWS(){
+  ws=new WebSocket((location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/ws');
+  ws.onmessage=e=>{try{handleWS(JSON.parse(e.data))}catch(ex){}};
+  ws.onclose=()=>setTimeout(connectWS,3000);
+  ws.onerror=()=>ws.close();
+}
+function handleWS(msg){
+  switch(msg.type){
+    case 'browser_crashed':
+      const el=document.getElementById('searchStatus');
+      if(el){el.innerHTML='<div class="status-banner">'+esc(msg.message||'浏览器已崩溃')+' <button class="btn btn-xs btn-primary" onclick="fetch(\'/api/system/start\',{method:\'POST\'}).then(()=>{refreshStatus();})">启动浏览器</button></div>';}
+      toast('浏览器已崩溃','error');
+      break;
+    case'connected':updateStatusUI(msg.status);break;
+    case'search_complete':
+      document.getElementById('searchStatus').innerHTML='<div class="status-banner success" style="margin-top:8px;">搜索完成，找到 '+msg.found+' 条</div>';
+      if(!searchInFlight&&currentSearchJobs.length===0)loadJobs();
+      toast('找到 '+msg.found+' 条岗位','success');
+      break;
+    case'apply_complete':
+      if(currentSearchJobs.length&&msg.job_url){currentSearchJobs=currentSearchJobs.map(j=>j.job_url===msg.job_url?{...j,status:'applied',id:msg.job_id||j.id}:j);renderJobs(currentSearchJobs);}else loadJobs();
+      refreshStatus();if(activeTab==='applications')loadApplications();
+      document.getElementById('searchStatus').innerHTML='';
+      toast('投递成功','success');
+      break;
+    case'batch_complete':loadJobs();refreshStatus();if(activeTab==='applications')loadApplications();
+      toast('批量投递完成','success');break;
+    case'new_messages':case'auto_reply_sent':case'manual_message_sent':
+      if(activeTab==='chat'){loadConversations().then(()=>{if(!activeConvId&&conversations.length>0)selectConversation(conversations[0].id);});}
+      if(activeConvId)loadMessages(activeConvId);
+      break;
+    case'session_expired':document.getElementById('sessionStatus').textContent='登录已过期';toast('登录已过期','error');break;
+    case'relogin_ok':document.getElementById('sessionStatus').textContent='登录态正常';toast('登录成功','success');break;
+    case'wechat_exchanged':if(activeTab==='wechat')loadWechatExchanges();break;
+    case'applications_cleared':loadApplications();refreshStatus();toast('岗位列表已清空','success');break;
+    case'conversations_cleared':loadConversations();activeConvId=null;document.getElementById('chatMessages').innerHTML='<div class="empty"><div class="empty-icon">💭</div>选择一个会话查看消息</div>';document.getElementById('chatHeader').innerHTML='<div class="header-left"><div class="info"><div class="name">选择会话</div><div class="company">点击左侧会话开始查看</div></div></div><div class="header-right"><button class="btn btn-sm" id="btnAutoReplyToggle" onclick="toggleAutoReply()" disabled>暂停当前自动回复</button></div>';document.getElementById('btnManualSend').disabled=true;refreshStatus();toast('聊天记录已清空','success');break;
+    case'monitor_paused':case'monitor_resumed':case'system':refreshStatus();break;
+  }
+}
+
+function refreshStatus(){
+  fetch('/api/status').then(r=>r.json()).then(s=>{
+    updateStatusUI(s);
+    // statToday 改为「列表内投递」，数据从 /api/stats 取，不再用 today_applications
+    document.getElementById('btnStart').disabled=s.browser_running;
+    document.getElementById('btnStop').disabled=!s.browser_running;
+  }).catch(()=>{});
+  // /api/stats 同步到：搜索页 funnel + 投递记录页 stat 卡片（同一个数据源）
+  fetch('/api/stats').then(r=>r.json()).then(d=>{
+    renderFunnel(d);
+    animateNumber(document.getElementById('statTotalJobs'),d.total_jobs||0);
+    animateNumber(document.getElementById('statToday'),d.applied||0);
+    animateNumber(document.getElementById('statFiltered'),d.filtered||0);
+    // 聊天页统计卡片：需要回复(24h) + 面试/微信(全量)
+    animateNumber(document.getElementById('chatStatReplied'),d.replied||0);
+    animateNumber(document.getElementById('chatStatInterview'),d.interview||0);
+  }).catch(()=>{});
+}
+function renderFunnel(d){
+  if(!d||d.total_jobs===undefined)return;
+  const el=document.getElementById('funnelBar');if(!el)return;
+  el.style.display='grid';
+  // 搜索页「搜索过滤」用会话级变量，和「当前待投递」「当前已投递」逻辑一致
+  el.innerHTML='<div class="funnel-card"><div class="num" data-key="pending" id="funnelPending">'+sessionSearchPending+'</div><div class="lbl">当前待投递</div></div>'
+    +'<div class="funnel-card"><div class="num" data-key="today" id="funnelApplied">'+sessionSearchApplied+'</div><div class="lbl">当前已投递</div></div>'
+    +'<div class="funnel-card"><div class="num" data-key="replied">'+(d.replied||0)+'</div><div class="lbl">需要回复</div></div>'
+    +'<div class="funnel-card"><div class="num" data-key="interview">'+(d.interview||0)+'</div><div class="lbl">面试/微信</div></div>'
+    +'<div class="funnel-card"><div class="num" data-key="filtered" id="funnelFiltered">'+sessionSearchFiltered+'</div><div class="lbl">搜索过滤</div></div>';
+}
+function updateStatusUI(s){
+  ['browserDot','monitorDot'].forEach(id=>{let d=document.getElementById(id);d.className='dot '+(s[id==='browserDot'?'browser_running':'monitor_running']?'on':'off');});
+  document.getElementById('browserStatus').textContent=s.browser_running?'运行中':'未启动';
+  document.getElementById('monitorStatus').textContent=s.monitor_running?(s.monitor_paused?'已暂停':'运行中'):'未启动';
+}
+
+function startSystem(){
+  document.getElementById('btnStart').disabled=true;
+  toast('正在启动浏览器…','info',1800);
+  fetch('/api/system/start',{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.status==='started'){refreshStatus();toast('浏览器已启动','success');}
+    else{toast('启动失败: '+(d.message||'未知'),'error');document.getElementById('btnStart').disabled=false;}
+  }).catch(()=>{toast('启动失败','error');document.getElementById('btnStart').disabled=false;});
+}
+function stopSystem(){toast('正在停止…','info',1500);fetch('/api/system/stop',{method:'POST'}).then(()=>{refreshStatus();toast('已停止','success');});}
+function doRelogin(){
+  if(!confirm('浏览器将打开BOSS登录页，确定继续？'))return;
+  let b=document.getElementById('btnRelogin');if(b){b.disabled=true;b.textContent='等待扫码...';}
+  document.getElementById('sessionStatus').textContent='请扫码登录';
+  toast('请在浏览器中扫码','info',2500);
+  fetch('/api/system/relogin',{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(b){b.disabled=false;b.textContent='重新扫码登录';}
+    document.getElementById('sessionStatus').textContent=d.status==='ok'?'登录态正常':(d.message||'失败');
+    toast(d.status==='ok'?'登录成功':'登录失败',d.status==='ok'?'success':'error');
+  }).catch(()=>{if(b){b.disabled=false;b.textContent='重新扫码登录';}toast('请求失败','error');});
+}
+function manualHeartbeat(){
+  document.getElementById('sessionStatus').textContent='检测中...';
+  fetch('/api/system/heartbeat',{method:'POST'}).then(r=>r.json()).then(d=>{
+    document.getElementById('sessionStatus').textContent=d.alive?'登录态正常':'已过期';
+    toast(d.alive?'登录态正常':'登录已过期',d.alive?'success':'error');
+  }).catch(()=>{document.getElementById('sessionStatus').textContent='检测失败';toast('检测失败','error');});
+}
+
+function doSearch(){
+  try{
+    localStorage.setItem('ui_searchKeyword',document.getElementById('searchKeyword').value);
+    localStorage.setItem('ui_searchCity',document.getElementById('searchCity').value);
+    localStorage.setItem('ui_setSearchKeywords',document.getElementById('setSearchKeywords').value);
+  }catch(e){}
+  searchInFlight=true;
+  document.getElementById('searchStatus').innerHTML='<div class="status-banner"><div class="spinner"></div> 搜索中...</div>';
+  const body={
+    keyword:document.getElementById('searchKeyword').value,
+    city:document.getElementById('searchCity').value,
+    welfare:document.getElementById('searchWelfare').value||undefined,
+    salary:document.getElementById('searchSalary').value||undefined,
+    experience:document.getElementById('searchExperience').value||undefined,
+    degree:document.getElementById('searchDegree').value||undefined,
+    job_type:document.getElementById('searchJobType').value||undefined,
+    scale:document.getElementById('searchScale').value||undefined,
+    stage:document.getElementById('searchStage').value||undefined,
+    area_business:document.getElementById('searchDistrict').value||undefined,
+  };
+  fetch('/api/jobs/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(d=>{
+    searchInFlight=false;
+    if(d.detail){document.getElementById('searchStatus').innerHTML='<div class="status-banner" style="margin-top:8px;">'+esc(d.detail)+'</div>';toast(d.detail,'error');return;}
+    if(d.jobs_found===undefined||d.jobs_found===null){document.getElementById('searchStatus').innerHTML='<div class="status-banner" style="margin-top:8px;">搜索失败</div>';toast('搜索失败','error');return;}
+    // 合并结果：按 job_url 去重，新结果置顶
+    var newJobs=Array.isArray(d.jobs)?d.jobs:[];
+    if(newJobs.length){
+      var existUrls=new Set(currentSearchJobs.map(function(j){return j.job_url||'';}));
+      var toPrepend=[];
+      newJobs.forEach(function(j){if(j.job_url&&!existUrls.has(j.job_url))toPrepend.push(j);});
+      if(toPrepend.length)currentSearchJobs=toPrepend.concat(currentSearchJobs);
+    }
+    // 构建搜索结果摘要：含过滤统计 + 恢复统计
+    let summary='找到 '+d.jobs_found+' 条，已保存 '+d.saved+' 条';
+    if(d.restored_from_filtered>0){
+      summary+='，已恢复过滤 '+d.restored_from_filtered+' 条';
+    }
+    let filteredTotal=(d.skipped_keyword||0)+(d.skipped_garbled||0)+(d.skipped_company||0)+(d.skipped_inactive_hr||0);
+    if(filteredTotal>0){
+      let parts=[];
+      if(d.skipped_keyword)parts.push('关键词 '+d.skipped_keyword);
+      if(d.skipped_garbled)parts.push('乱码 '+d.skipped_garbled);
+      if(d.skipped_company)parts.push('公司去重 '+d.skipped_company);
+      if(d.skipped_inactive_hr)parts.push('HR不活跃 '+d.skipped_inactive_hr);
+      summary+='，已过滤'+parts.map(function(p){return ' '+p;}).join('')+' 条';
+    }
+    document.getElementById('searchStatus').innerHTML='<div class="status-banner success" style="margin-top:8px;">'+summary+'</div>';
+    // 更新漏斗「搜索过滤」数字（会话级累加）
+    sessionSearchFiltered+=filteredTotal-(d.restored_from_filtered||0);
+    let funnelEl=document.getElementById('funnelFiltered');
+    if(funnelEl)animateNumber(funnelEl,sessionSearchFiltered);
+    currentSearchJobs.length?renderJobs(currentSearchJobs):loadJobs();
+    let toastMsg='找到 '+d.jobs_found+' 条岗位';
+    if(filteredTotal)toastMsg+='，过滤 '+filteredTotal+' 条';
+    if(d.restored_from_filtered)toastMsg+='，恢复 '+d.restored_from_filtered+' 条';
+    toast(toastMsg,'success');
+  }).catch(err=>{searchInFlight=false;document.getElementById('searchStatus').innerHTML='<div class="status-banner" style="margin-top:8px;">失败: '+esc(err.message)+'</div>';toast('搜索失败: '+err.message,'error');});
+}
+function loadJobs(){fetch('/api/jobs?limit=50').then(r=>r.json()).then(d=>{currentSearchJobs=[];renderJobs((d.jobs||[]).filter(j=>j.status!=='filtered'));});}
+
+function renderJobs(jobs){
+  const grid=document.getElementById('jobsGrid');
+  if(!jobs||!jobs.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1;"><div class="empty-icon">📭</div>暂无岗位</div>';let fp=document.getElementById('funnelPending');if(fp)animateNumber(fp,sessionSearchPending);animateNumber(document.getElementById('metaJobsJobs')||document.getElementById('metaJobs'),0);return;}
+  const sl={pending:'待投递',applied:'已投递',replied:'需要回复',skipped:'已跳过',failed:'失败',filtered:'已过滤',missing_url:'缺少链接'};
+  const sb={pending:'badge-pending',applied:'badge-applied',replied:'badge-replied',skipped:'badge-skipped',failed:'badge-failed',filtered:'badge-filtered',missing_url:'badge-missing_url'};
+  const inactiveDaysEl=document.getElementById('inactiveDays');
+  const inactiveThreshold=inactiveDaysEl?parseInt(inactiveDaysEl.value||'7',10):7;
+  grid.innerHTML=jobs.map((j,idx)=>{
+    let hasUrl=!!j.job_url,s=j.status||(hasUrl?'pending':'missing_url'),titleText=j.job_title||j.title||'未知';
+    let title=hasUrl?'<a href="'+attr(j.job_url)+'" target="_blank" rel="noopener">'+esc(titleText)+'</a>':esc(titleText);
+    let acts='';
+    if((s==='pending'||s==='failed')&&hasUrl)acts+='<button class="btn btn-xs btn-primary" data-action="apply" data-url="'+attr(j.job_url)+'">投递</button> ';
+    acts+='<button class="btn btn-xs btn-ghost" onclick="analyzeJob(\''+attr(j.job_url)+'\',\''+attr(titleText)+'\',\''+attr(j.company||'')+'\',\''+attr((j.description||'').slice(0,500))+'\',\''+attr(j.company_id||'')+'\','+(j.company_already_applied?'true':'false')+')">分析</button> ';
+    acts+='<button class="btn btn-xs btn-ghost" onclick="toggleShortlist(\''+attr(j.job_url)+'\',\''+attr(titleText)+'\',\''+attr(j.company||'')+'\',\''+attr(j.salary||'')+'\',\''+attr(j.city||'')+'\',this)">收藏</button>';
+
+    let hrActiveTag='';
+    if(j.hr_active_label||(typeof j.hr_active_days==='number'&&j.hr_active_days>=0)){
+      const days=typeof j.hr_active_days==='number'?j.hr_active_days:-1;
+      let cls='green';
+      if(days>inactiveThreshold){cls='red';}
+      else if(days>3&&days<=inactiveThreshold){cls='orange';}
+      const label=j.hr_active_label||(days===0?'刚刚':days===1?'今日':days>0?(days+'d'):'?');
+      hrActiveTag='<span class="hr-tag '+cls+'" title="HR上次活跃 '+esc(label)+'">⏱ '+esc(label)+'</span>';
+    }
+    let dupTag=j.company_already_applied?'<span class="dup-warn">⚠ 已发过</span>':'';
+    let companyTag=j.company?'<span class="company">@ '+esc(j.company)+'</span>':'';
+    let cityTag=j.city?'<span class="meta-item">'+esc(j.city)+'</span>':'';
+
+    return'<div class="job-card" style="animation-delay:'+Math.min(idx*0.04,0.3)+'s">'
+      +'<div class="job-card-head">'
+      +'<div class="title">'+title+'</div>'
+      +(j.salary?'<div class="salary">'+esc(j.salary)+'</div>':'')
+      +'</div>'
+      +'<div class="job-card-body">'
+      +companyTag
+      +cityTag
+      +'<span class="badge '+sb[s]+'">'+sl[s]+'</span>'
+      +hrActiveTag
+      +dupTag
+      +'</div>'
+      +'<div class="job-card-foot">'
+      +'<div class="left"></div>'
+      +'<div class="right">'+acts+'</div>'
+      +'</div>'
+      +'</div>';
+  }).join('');
+  const pendingCount=jobs.filter(j=>(j.status||'pending')==='pending').length;
+  const appliedCount=jobs.filter(j=>j.status==='applied'||j.status==='replied').length;
+  // 会话级统计：只在有搜索结果时更新（搜索完成后、投递后刷新）
+  if(currentSearchJobs.length){sessionSearchPending=pendingCount;sessionSearchApplied=appliedCount;}
+  let fp=document.getElementById('funnelPending');if(fp)animateNumber(fp,sessionSearchPending);
+  let fa=document.getElementById('funnelApplied');if(fa)animateNumber(fa,sessionSearchApplied);
+  const metaEl=document.getElementById('metaJobs');
+  if(metaEl)metaEl.textContent=pendingCount+' 待投递';
+}
+
+function applyOne(url,btn){
+  if(!url){toast('缺少链接','error');return;}
+  if(btn){btn.disabled=true;btn.innerHTML='<div class="spinner"></div> 投递中';}
+  fetch('/api/jobs/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_url:url})}).then(r=>r.json()).then(d=>{
+    if(d.success){
+      if(currentSearchJobs.length){currentSearchJobs=currentSearchJobs.map(j=>j.job_url===url?{...j,status:'applied',id:d.application_id||j.id}:j);renderJobs(currentSearchJobs);}else loadJobs();
+      refreshStatus();if(activeTab==='applications')loadApplications();
+      toast('投递成功','success');
+    }else{
+      toast(d.message||'失败','error');
+      if(btn){btn.disabled=false;btn.textContent='投递';}
+    }
+  }).catch(()=>{toast('网络错误','error');if(btn){btn.disabled=false;btn.textContent='投递';}});
+}
+function skipJob(id){
+  fetch('/api/jobs/'+id+'/skip',{method:'POST'}).then(()=>{
+    if(currentSearchJobs.length){currentSearchJobs=currentSearchJobs.map(j=>String(j.id)===String(id)?{...j,status:'skipped'}:j);renderJobs(currentSearchJobs);}else loadJobs();
+    refreshStatus();if(activeTab==='applications')loadApplications();
+    toast('已跳过','info',1500);
+  });
+}
+
+function analyzeJob(url,title,company,desc,companyId,companyAlreadyApplied){
+  let m=document.createElement('div');m.className='analyze-modal-overlay';
+  m.innerHTML='<div class="modal-box"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;"><h3>AI 岗位分析</h3><button onclick="this.closest(\'.analyze-modal-overlay\').remove()" style="background:none;border:none;color:var(--text-3);font-size:20px;cursor:pointer;line-height:1;width:28px;height:28px;border-radius:6px;transition:background .15s;color:var(--text-2);" onmouseover="this.style.background=\'var(--bg-2)\'" onmouseout="this.style.background=\'none\'">&times;</button></div>'
+    +(companyAlreadyApplied?'<div style="background:var(--orange-soft);border:1px solid rgba(245,158,11,.25);padding:8px 12px;font-size:12px;margin-bottom:12px;color:var(--orange);border-radius:var(--radius-sm);display:flex;align-items:center;gap:6px;">⚠ 该公司已发过，本次投递会自动跳过</div>':'')
+    +'<div id="analyzeResult" style="display:flex;align-items:center;gap:10px;color:var(--text-2);"><div class="spinner spinner-lg"></div> 分析中（可能包含公司信息抓取）...</div>'
+    +'<div id="companyInfoBlock" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border);"></div>'
+    +'<div style="font-size:10.5px;color:var(--text-3);margin-top:10px;font-family:var(--mono);">'+esc(title)+' @ '+esc(company)+'</div></div>';
+  document.body.appendChild(m);
+  fetch('/api/jobs/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_url:url,job_title:title,company:company,company_id:companyId||'',description:desc,with_company_info:true})}).then(r=>r.json()).then(d=>{
+    if(d.error){document.getElementById('analyzeResult').innerHTML='<div style="color:var(--red);">'+esc(d.error)+'</div>';return;}
+    let score=d.match_score||0,c=score>=80?'var(--green)':score>=60?'var(--orange)':'var(--red)';
+    const listBlock=(title,arr,color)=>Array.isArray(arr)&&arr.length?'<div style="margin-top:8px;"><b style="color:var(--text-3);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;">'+title+'</b><div style="margin-top:6px;">'+arr.map(x=>'<span class="badge" style="margin:2px;background:'+color+';color:var(--text);border:1px solid var(--border);">'+esc(x)+'</span>').join('')+'</div></div>':'';
+    const decision=d.decision?'<div style="margin:10px 0;padding:10px 12px;border:1px solid '+c+';border-radius:var(--radius-sm);background:var(--bg-2);"><b style="color:var(--text-3);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;">结论</b><div style="color:'+c+';font-weight:700;margin-top:3px;">'+esc(d.decision)+'</div></div>':'';
+    document.getElementById('analyzeResult').innerHTML='<div style="font-size:28px;margin-bottom:14px;font-weight:700;letter-spacing:-.02em;color:var(--text);">匹配度 <span style="color:'+c+';font-family:var(--mono);">'+score+'%</span></div>'+decision+(d.key_skills?'<div style="margin-bottom:10px;"><b style="color:var(--text-3);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;">关键技能</b><div style="margin-top:6px;">'+d.key_skills.map(s=>'<span class="badge badge-applied" style="margin:2px;">'+esc(s)+'</span>').join('')+'</div></div>':'')+(d.gap?'<div style="margin-bottom:10px;"><b style="color:var(--text-3);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;">差距</b><div style="margin-top:4px;line-height:1.6;">'+esc(d.gap)+'</div></div>':'')+(d.advice?'<div style="margin-bottom:10px;"><b style="color:var(--text-3);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;">建议</b><div style="margin-top:4px;line-height:1.6;">'+esc(d.advice)+'</div></div>':'')+(d.summary?'<div style="color:var(--text-2);line-height:1.6;white-space:pre-wrap;padding:10px 12px;background:var(--bg-2);border-radius:var(--radius-sm);">'+esc(d.summary)+'</div>':'')+listBlock('判断理由',d.reasons,'rgba(34,197,94,.12)')+listBlock('风险点',d.risks,'rgba(239,68,68,.12)')+listBlock('建议追问',d.suggested_questions,'rgba(59,130,246,.12)');
+    let ci=d.company_info;
+    if(ci){
+      let block=document.getElementById('companyInfoBlock');
+      let rows=[];
+      const push=(k,v)=>{const s=(v||'').toString().trim();if(s&&s!=='-'&&s!=='—'&&s!=='无'&&s!=='暂无'&&s!=='未知')rows.push('<span style="display:inline-block;margin-right:14px;font-size:12px;"><span style="color:var(--text-3);">'+k+'：</span><b style="color:var(--text);">'+esc(s)+'</b></span>');};
+      push('行业',ci.industry);
+      push('融资',ci.stage);
+      push('规模',ci.scale);
+      push('员工数',ci.employee_count);
+      push('成立',ci.founded_year);
+      push('地点',ci.location);
+      let meta='<div style="font-size:13px;line-height:2;margin-bottom:6px;">'+(rows.length?rows.join(''):'<span style="color:var(--text-3);">（未抓到基础信息）</span>')+'</div>';
+      let posBlock='';
+      if(ci.open_position_count){
+        const bad=/^(\d+[-~]\d+[kK]?|\d+[kK][-~]\d+[kK]|职位搜索|搜索职位|更多|展开)$/;
+        let names=ci.open_positions?ci.open_positions.split(/[、,，]/).map(s=>s.trim()).filter(s=>s&&!bad.test(s)).slice(0,8):[];
+        let list=names.length?names.map(s=>'<span class="badge badge-applied" style="margin:2px;font-size:10px;">'+esc(s)+'</span>').join(''):'<span style="color:var(--text-3);">暂无有效岗位名</span>';
+        posBlock='<div style="margin-top:8px;font-size:12px;"><b>正在招聘 ('+names.length+' 个):</b><div style="margin-top:4px;line-height:2;">'+list+'</div></div>';
+      }
+      let descBlock=ci.description?'<div style="font-size:11px;color:var(--text-3);margin-top:6px;line-height:1.5;">'+esc(ci.description).slice(0,300)+'</div>':'';
+      let src=ci.source?'<div style="font-size:9px;color:var(--text-3);margin-top:6px;">数据来源: '+esc(ci.source)+'</div>':'';
+      block.style.display='block';
+      block.innerHTML='<div style="font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin-bottom:8px;">公司信息</div>'+meta+posBlock+descBlock+src;
+    }
+  }).catch(e=>{document.getElementById('analyzeResult').innerHTML='<div style="color:var(--red);">失败: '+e.message+'</div>';});
+}
+
+function toggleShortlist(url,title,company,salary,city,btn){
+  fetch('/api/shortlists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_url:url,title,company,salary,city})}).then(r=>r.json()).then(d=>{
+    if(d.status==='already_exists'||d.status==='duplicate'){btn.textContent='已收藏';btn.style.opacity='.5';toast('已收藏过','info',1500);}
+    else{btn.textContent='已收藏';btn.style.opacity='1';toast('已加入收藏','success');}
+  }).catch(()=>toast('收藏失败','error'));
+}
+
+let appCurrentPage=1,appCurrentStatus='',appAllJobs=[],APP_PAGE_SIZE=15,appTotalPages=1;
+function _setAppFilterActive(filterId){
+  document.querySelectorAll('[id^="appFilter"]').forEach(b=>b.classList.remove('filter-btn-active'));
+  var el=document.getElementById(filterId);if(el)el.classList.add('filter-btn-active');
+}
+function loadApplications(status){appCurrentStatus=status||'';appCurrentPage=1;
+  _setAppFilterActive(status==='pending'?'appFilterPending':status==='applied'?'appFilterApplied':status==='replied'?'appFilterReplied':status==='filtered'?'appFilterFiltered':'appFilterAll');
+  fetch('/api/jobs?limit=2000'+(status?'&status='+status:'')).then(r=>r.json()).then(d=>{appAllJobs=d.jobs||[];renderAppPage();});}
+function renderAppPage(){
+  let tbody=document.getElementById('appTableBody'),total=appAllJobs.length,totalPages=Math.max(1,Math.ceil(total/APP_PAGE_SIZE)),start=(appCurrentPage-1)*APP_PAGE_SIZE;
+  appTotalPages=totalPages;
+  if(appCurrentPage>totalPages)appCurrentPage=totalPages;
+  let page=appAllJobs.slice(start,start+APP_PAGE_SIZE);
+  if(!total){tbody.innerHTML='<tr><td colspan="6" class="empty">暂无记录</td></tr>';document.getElementById('appPagination').innerHTML='';return;}
+  let sl={pending:'待投递',applied:'已投递',replied:'需要回复',skipped:'已跳过',failed:'失败',filtered:'已过滤'},sb={pending:'badge-pending',applied:'badge-applied',replied:'badge-replied',skipped:'badge-skipped',failed:'badge-failed',filtered:'badge-filtered'};
+  tbody.innerHTML=page.map(j=>{let s=j.status||'pending';return'<tr><td><a href="'+attr(j.job_url)+'" target="_blank">'+esc(j.job_title||j.title||'未知')+'</a></td><td>'+esc(j.company||'')+'</td><td>'+esc(j.salary||'')+'</td><td>'+esc(j.city||'')+'</td><td><span class="badge '+sb[s]+'">'+sl[s]+'</span></td><td>'+(j.job_url?'<button class="btn btn-sm btn-primary" onclick="applyOne(\''+attr(j.job_url)+'\',this)">投递</button>':'')+'</td></tr>';}).join('');
+  document.getElementById('appPagination').innerHTML='<button '+(appCurrentPage<=1?'disabled':'')+' onclick="appCurrentPage=1;renderAppPage()">«</button><button '+(appCurrentPage<=1?'disabled':'')+' onclick="appCurrentPage--;renderAppPage()">‹</button><span>'+(start+1)+'-'+Math.min(start+APP_PAGE_SIZE,total)+' / '+total+'</span><button '+(appCurrentPage>=totalPages?'disabled':'')+' onclick="appCurrentPage++;renderAppPage()">›</button><button '+(appCurrentPage>=totalPages?'disabled':'')+' onclick="appCurrentPage=appTotalPages;renderAppPage()">»</button>';
+}
+
+function loadShortlists(){
+  _setAppFilterActive('appFilterShortlist');
+  fetch('/api/shortlists').then(r=>r.json()).then(d=>{
+    let tbody=document.getElementById('appTableBody'),sl=d.shortlists||[];
+    if(!sl.length){tbody.innerHTML='<tr><td colspan="6" class="empty">暂无收藏</td></tr>';return;}
+    tbody.innerHTML=sl.map(s=>'<tr><td><a href="'+attr(s.job_url)+'" target="_blank">'+esc(s.job_title)+'</a></td><td>'+esc(s.company||'')+'</td><td>'+esc(s.salary||'')+'</td><td>'+esc(s.city||'')+'</td><td><span class="badge badge-applied">收藏</span></td><td><button class="btn btn-sm" onclick="removeShortlist('+s.id+',this)">取消</button> <button class="btn btn-sm btn-primary" onclick="applyOne(\''+attr(s.job_url)+'\',this)">投递</button></td></tr>').join('');
+  });
+}
+function removeShortlist(id,btn){fetch('/api/shortlists/'+id,{method:'DELETE'}).then(()=>{loadShortlists();toast('已取消收藏','info',1500);});}
+
+function loadConversations(){
+  return fetch('/api/conversations').then(r=>r.json()).then(d=>{
+    conversations=d.conversations||[];let list=document.getElementById('conversationList');
+    let totalUnread=conversations.reduce((s,c)=>s+(c.unread_count||0),0);
+    const navUnread=document.getElementById('navUnread');
+    if(navUnread){
+      if(totalUnread>0){navUnread.style.display='inline-flex';navUnread.textContent=totalUnread>99?'99+':totalUnread;}
+      else{navUnread.style.display='none';}
+    }
+    if(!conversations.length){list.innerHTML='<div class="empty"><div class="empty-icon">💬</div>暂无会话</div>';return;}
+    list.innerHTML=conversations.map(c=>{
+      const initial=(c.hr_name||'?').slice(0,1).toUpperCase();
+      // 岗位信息：岗位名 · 薪资 · 城市
+      let jobTitle=c.job_title||'';
+      if(/^\d+$/.test(jobTitle))jobTitle='';
+      const salary=c.salary||'';
+      const city=c.city||'';
+      const jobParts=[jobTitle,salary,city].filter(Boolean);
+      const jobLine=jobParts.length?jobParts.join(' · '):'';
+      return'<div class="chat-list-item'+(activeConvId===c.id?' active':'')+'" onclick="selectConversation('+c.id+')">'
+        +'<div class="chat-avatar">'+esc(initial)+'</div>'
+        +'<div class="info">'
+        +'<div class="name-row"><div class="name"><span class="name-text">'+esc(c.hr_name||'未知')+'</span>'+(jobLine?'<span class="job-inline">'+esc(jobLine)+'</span>':'')+(c.last_message_from==='hr'&&Date.now()-new Date(c.last_message_at).getTime()<86400000?'<span class="reply-dot"></span>':'')+'</div>'+(c.unread_count>0?'<span class="unread">'+c.unread_count+'</span>':'')+'</div>'
+        +'<div class="preview">'+esc((c.last_message_text||'').slice(0,40))+'</div>'
+        +'</div></div>';
+    }).join('');
+  });
+}
+function selectConversation(id){
+  activeConvId=id;loadConversations();
+  // 显示同步遮罩，不立即加载旧缓存
+  const pane=document.getElementById('chatMessages');
+  pane.classList.add('syncing');
+  pane.innerHTML='<div class="sync-overlay"><div class="spinner"></div><div class="sync-text">正在对齐颗粒度...📡</div></div>';
+  let conv=conversations.find(c=>c.id===id);if(!conv)return;
+  const initial=(conv.hr_name||'?').slice(0,1).toUpperCase();
+  // 只保留岗位名（后端从 .position-name 精确 class 提取）
+  const jobTitle=conv.job_title||'';
+  const salary=conv.salary||'';
+  const city=conv.city||'';
+  // 第二行拼装：岗位名 · 薪资 · 城市
+  const parts=[jobTitle,salary,city].filter(Boolean);
+  const subLine=parts.length?parts.join(' · '):'';
+  document.getElementById('chatHeader').innerHTML=
+    '<div class="header-left">'
+    +'<div class="chat-avatar" style="width:32px;height:32px;font-size:12px;">'+esc(initial)+'</div>'
+    +'<div class="info">'
+    /* 第一行：HR名字 + 在线状态 */
+    +'<div class="name-row"><span class="name">'+esc(conv.hr_name||'未知')+'</span>'
+    +(conv.online_status?'<span class="online-badge'+(conv.online_status==='离线'?' offline':'')+'">'+esc(conv.online_status)+'</span>':'')
+    +'</div>'
+    /* 第二行：岗位名 · 薪资 · 城市 */
+    +(subLine?'<div class="job-row">'+esc(subLine)+'</div>':'')
+    +'</div></div>'
+    +'<div class="header-right">'
+    +'<button class="btn btn-sm" id="btnAutoReplyToggle" onclick="toggleAutoReply()">'+(conv.auto_reply_enabled?'暂停当前自动回复':'开启当前自动回复')+'</button>'
+    +'</div>';
+  document.getElementById('btnManualSend').disabled=false;
+  document.getElementById('btnAutoReplyToggle').disabled=false;
+  syncConversation(id);
+}
+function loadMessages(id){fetch('/api/conversations/'+id+'/messages?limit=100').then(r=>r.json()).then(d=>renderMessages(d.messages||[]));}
+function syncConversation(id){fetch('/api/conversations/'+id+'/sync',{method:'POST'}).then(r=>r.json()).then(d=>{if(activeConvId===id&&d.messages)renderMessages(d.messages);}).catch(()=>{if(activeConvId===id){let pane=document.getElementById('chatMessages');pane.classList.remove('syncing');loadMessages(id);}});}
+function renderMessages(msgs){
+  let pane=document.getElementById('chatMessages');
+  // 清除同步遮罩
+  pane.classList.remove('syncing');
+  if(!msgs||!msgs.length){pane.innerHTML='<div class="empty"><div class="empty-icon">💭</div>暂无消息</div>';return;}
+  let old=pane.querySelectorAll('.msg-row').length,isNew=msgs.length>old;
+  let conv=conversations.find(c=>c.id===activeConvId);
+  let hrName=(conv&&conv.hr_name)||'HR';
+  let hrInitial=(hrName.slice(0,1)).toUpperCase();
+  // 格式化平台时间
+  const fmtTime=(t)=>{
+    if(!t)return'';
+    try{
+      const d=new Date(t);
+      const now=new Date();
+      const today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+      const msgDay=new Date(d.getFullYear(),d.getMonth(),d.getDate());
+      const hm=d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0');
+      if(msgDay.getTime()===today.getTime())return hm;
+      const yesterday=new Date(today);yesterday.setDate(yesterday.getDate()-1);
+      if(msgDay.getTime()===yesterday.getTime())return'昨天 '+hm;
+      const mm=(d.getMonth()+1).toString().padStart(2,'0');
+      const dd=d.getDate().toString().padStart(2,'0');
+      return mm+'-'+dd+' '+hm;
+    }catch(e){return'';}
+  };
+  pane.innerHTML=msgs.map((m,i)=>{
+    const isMe=m.sender==='me';
+    const isAi=isMe&&m.ai_generated;
+    const side=isMe?'me':'hr';
+    const avClass=isAi?'msg-avatar ai-av':(isMe?'msg-avatar me-av':'msg-avatar hr-av');
+    const avText=isAi?'AI':(isMe?'我':hrInitial);
+    const bubbleClass='msg-bubble'+(isAi?' ai':'');
+    const c=esc(m.content).replace(/^(?:已读|未读|送达|发送失败|已发送)\s*/,'');
+    const label=isMe?'我'+(isAi?' · AI代发':''):hrName;
+    const timeStr=fmtTime(m.platform_time||m.created_at);
+    const anim=isNew&&i>=old?'animation-delay:'+Math.min((i-old)*0.04,0.3)+'s':'';
+    return'<div class="msg-row '+side+'" style="'+anim+'">'
+      +'<div class="'+avClass+'">'+avText+'</div>'
+      +'<div class="msg-body">'
+      +'<div class="'+bubbleClass+'">'+c+'</div>'
+      +'<div class="msg-meta">'+label+(timeStr?' · '+timeStr:'')+'</div>'
+      +'</div>'
+      +'</div>';
+  }).join('');
+  pane.scrollTop=pane.scrollHeight;
+}
+function sendManualMessage(){
+  if(!activeConvId){toast('请先选择会话','warning');return;}
+  let input=document.getElementById('chatInput'),c=input.value.trim();if(!c)return;
+  input.value='';input.disabled=true;let btn=document.getElementById('btnManualSend');if(btn){btn.disabled=true;btn.innerHTML='<div class="spinner"></div> 发送中';}
+  fetch('/api/conversations/'+activeConvId+'/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:c})}).then(r=>r.json()).then(()=>{loadMessages(activeConvId);loadConversations();toast('已发送','success',1200);}).catch(e=>{toast('失败: '+(e.message||'网络错误'),'error');}).finally(()=>{input.disabled=false;input.focus();if(btn){btn.disabled=false;btn.textContent='发送';}});
+}
+function toggleAutoReply(){
+  if(!activeConvId)return;let conv=conversations.find(c=>c.id===activeConvId);if(!conv)return;
+  const willEnable=!conv.auto_reply_enabled;
+  const endpoint=willEnable?'/api/conversations/'+activeConvId+'/resume':'/api/conversations/'+activeConvId+'/pause';
+  fetch(endpoint,{method:'POST'}).then(r=>r.json()).then(()=>{loadConversations().then(()=>selectConversation(activeConvId));toast(willEnable?'当前自动回复已开启':'当前自动回复已暂停',willEnable?'success':'info');});
+}
+
+
+/* ── 通用确认弹窗 ── */
+function _showConfirmModal(icon,title,desc,onConfirm,btnText,btnClass){
+  const id='confirmModal_'+Date.now();
+  const overlay=document.createElement('div');
+  overlay.className='analyze-modal-overlay confirm-modal';
+  overlay.id=id;
+  overlay.innerHTML='<div class="modal-box">'
+    +'<div class="confirm-icon">'+icon+'</div>'
+    +'<div class="confirm-title">'+title+'</div>'
+    +'<div class="confirm-desc">'+desc+'</div>'
+    +'<div class="confirm-actions">'
+    +'<button class="btn btn-sm" onclick="document.getElementById(\''+id+'\').remove()">取消</button>'
+    +'<button class="btn btn-sm '+(btnClass||'btn-primary')+'" id="'+id+'_ok">'+(btnText||'确认')+'</button>'
+    +'</div></div>';
+  document.body.appendChild(overlay);
+  overlay.querySelector('#'+id+'_ok').onclick=function(){overlay.remove();onConfirm();};
+  overlay.addEventListener('click',function(e){if(e.target===overlay)overlay.remove();});
+}
+/* ── 轻量确认弹窗（用于搜索等低风险操作）── */
+function _showLightConfirm(title,desc,onConfirm,btnText){
+  const id='confirmModal_'+Date.now();
+  const overlay=document.createElement('div');
+  overlay.className='analyze-modal-overlay confirm-modal';
+  overlay.id=id;
+  overlay.innerHTML='<div class="modal-box">'
+    +'<div class="confirm-icon" style="font-size:28px;margin-bottom:8px;">🔍</div>'
+    +'<div class="confirm-title" style="font-size:14px;">'+title+'</div>'
+    +'<div class="confirm-desc" style="font-size:12px;color:var(--text-2);margin-bottom:16px;">'+desc+'</div>'
+    +'<div class="confirm-actions">'
+    +'<button class="btn btn-sm" onclick="document.getElementById(\''+id+'\').remove()">取消</button>'
+    +'<button class="btn btn-sm btn-primary" id="'+id+'_ok">'+(btnText||'确认')+'</button>'
+    +'</div></div>';
+  document.body.appendChild(overlay);
+  overlay.querySelector('#'+id+'_ok').onclick=function(){overlay.remove();onConfirm();};
+  overlay.addEventListener('click',function(e){if(e.target===overlay)overlay.remove();});
+}
+/* ── 气泡确认提示 ── */
+function _showPopoverConfirm(btn,text,onConfirm,confirmText,confirmClass){
+  if(!btn)return;
+  // 关闭已有的气泡
+  document.querySelectorAll('.popover-confirm').forEach(function(el){el.remove();});
+  const pop=document.createElement('div');
+  pop.className='popover-confirm';
+  pop.innerHTML='<div class="pop-text">'+text+'</div>'
+    +'<div class="pop-actions">'
+    +'<button class="btn btn-xs" data-action="cancel">取消</button>'
+    +'<button class="btn btn-xs '+(confirmClass||'btn-primary')+'" data-action="ok">'+(confirmText||'确认')+'</button>'
+    +'</div>';
+  document.body.appendChild(pop);
+  // 定位到按钮下方
+  var rect=btn.getBoundingClientRect();
+  pop.style.right=(window.innerWidth-rect.right)+'px';
+  pop.style.top=(rect.bottom+6)+'px';
+  pop.querySelector('[data-action="cancel"]').onclick=function(e){e.stopPropagation();removePop();};
+  pop.querySelector('[data-action="ok"]').onclick=function(e){e.stopPropagation();removePop();onConfirm();};
+  function removePop(){pop.remove();document.removeEventListener('click',_closeHandler);}
+  // 用 click 事件监听外部点击，通过 stopPropagation 防止按钮点击触发
+  function _closeHandler(e){if(!pop.contains(e.target)&&e.target!==btn){removePop();}}
+  setTimeout(function(){document.addEventListener('click',_closeHandler);},50);
+}
+function confirmClearApplications(){
+  _showConfirmModal('⚠️','清空岗位列表','此操作将删除所有岗位列表记录（含收藏）<br /><b>不可恢复，确定要清空吗？</b>',function(){
+    fetch('/api/applications/clear',{method:'POST'}).then(r=>{
+      if(!r.ok) return r.json().then(j=>Promise.reject(j.detail||'请求失败 ('+r.status+')'));
+      return r.json();
+    }).then(d=>{loadApplications();refreshStatus();toast('已清空 '+(d.deleted||0)+' 条岗位记录','success');}).catch(e=>toast('清空失败: '+e,'error'));
+  },'确认清空','btn-danger');
+}
+function confirmClearConversations(){
+  _showConfirmModal('⚠️','清空聊天页数据','此操作将删除所有聊天页会话和消息记录（仅当前页面）<br /><b>不可恢复，确定要清空吗？</b>',function(){
+    fetch('/api/conversations/clear',{method:'POST'}).then(r=>{
+      if(!r.ok) return r.json().then(j=>Promise.reject(j.detail||'请求失败 ('+r.status+')'));
+      return r.json();
+    }).then(d=>{
+      activeConvId=null;loadConversations();
+      document.getElementById('chatMessages').innerHTML='<div class="empty"><div class="empty-icon">💭</div>选择一个会话查看消息</div>';
+      document.getElementById('chatHeader').innerHTML='<div class="header-left"><div class="info"><div class="name">选择会话</div><div class="company">点击左侧会话开始查看</div></div></div><div class="header-right"><button class="btn btn-sm" id="btnAutoReplyToggle" onclick="toggleAutoReply()" disabled>暂停当前自动回复</button></div>';
+      document.getElementById('btnManualSend').disabled=true;
+      refreshStatus();toast('已清空 '+(d.deleted||0)+' 个聊天会话','success');
+    }).catch(e=>toast('清空失败: '+e,'error'));
+  },'确认清空','btn-danger');
+}
+function confirmRestoreDefaults(){
+  _showConfirmModal('🔄','恢复默认设置','将所有设置项恢复为默认值，包括清空已配置的 API Key<br /><b>确定要清空吗？</b>',function(){
+    // 重置所有 UI 值为默认
+    setVal('setGreetingMode','template');
+    setVal('setGreeting',DEFAULT_GREETING_TEMPLATE);
+    setVal('setSmartGreetingPrompt',DEFAULT_SMART_GREETING_PROMPT);
+    setVal('setResume',DEFAULT_RESUME_SUMMARY);
+    setVal('setStyle','professional');
+    setVal('setDailyLimit','15');
+    setVal('setMinDelay','30');
+    setVal('setMaxDelay','120');
+    setVal('setLocation','');
+    setVal('setWechat','');
+    setVal('setSearchKeywords','');
+    setVal('setAutoReply','false');
+    setVal('setAIBaseUrl','');
+    setVal('setAIModel','');
+    setVal('setAIPlatform','');
+    setVal('setConversationCooldown','60');
+    setVal('setReplyRules',DEFAULT_REPLY_PROMPT);
+    setVal('inactiveDays','7');
+    document.getElementById('chkFilterInactiveHr').checked=true;
+    document.getElementById('chkDedupCompany').checked=true;
+    // 清除 API Key
+    document.getElementById('setAIApiKey').value='';
+    document.getElementById('setAIApiKey').placeholder='输入API Key';
+    document.getElementById('aiKeyStatus').innerHTML='<span style="color:var(--orange);">未配置</span>';
+    clearApiKeyFlag=true;
+    toggleGreetingRows();
+    // 自动保存到后端
+    saveSettings();
+    toast('已恢复所有默认设置','success');
+  });
+}
+
+function loadWechatExchanges(){
+  fetch('/api/wechat-exchanges').then(r=>r.json()).then(d=>{
+    let el=document.getElementById('wechatExchangesList'),ex=d.exchanges||[];
+    if(!ex.length){el.innerHTML='<div class="empty"><div class="empty-icon">📱</div>暂无微信记录</div>';return;}
+    el.innerHTML=ex.map(e=>{
+      let t=new Date(e.wechat_shared_at).toLocaleString('zh-CN'),w=e.hr_wechat||'';
+      let desc=e.job_description?'<div class="desc">'+esc(e.job_description)+'</div>':'';
+      return'<div class="hr-wechat-card"><div class="row"><div style="flex:1;">'
+        +'<div class="who">'+esc(e.hr_name)+'</div>'
+        +desc
+        +'<div class="wxcode"><code>'+w+'</code><button class="btn btn-xs btn-primary" onclick="copyWechat(\''+w.replace(/'/g,"\\'")+'\',this)">复制</button></div>'
+        +'</div><div class="meta">'+esc(e.hr_company||'')+'<br>'+t+'</div></div></div>';
+    }).join('');
+  });
+}
+let wechatRefreshTimer=null;
+function startWechatAutoRefresh(){
+  stopWechatAutoRefresh();
+  wechatRefreshTimer=setInterval(()=>{if(activeTab==='wechat')loadWechatExchanges();},30000);
+}
+function stopWechatAutoRefresh(){if(wechatRefreshTimer){clearInterval(wechatRefreshTimer);wechatRefreshTimer=null;}}
+function copyWechat(text,btn){navigator.clipboard.writeText(text).then(()=>{btn.textContent='已复制';btn.classList.add('btn-success');btn.classList.remove('btn-primary');setTimeout(()=>{btn.textContent='复制';btn.classList.remove('btn-success');btn.classList.add('btn-primary');},1500);toast('已复制微信号','success',1200);});}
+
+// 岗位关键词过滤 → 实时同步到 settings（防抖 500ms）
+let _titleFilterTimer=null;
+function debounceSaveTitleFilter(){
+  clearTimeout(_titleFilterTimer);
+  _titleFilterTimer=setTimeout(saveTitleFilterToSettings,500);
+}
+function saveTitleFilterToSettings(){
+  let v=(document.getElementById('searchTitleBlacklist')?.value||'').trim();
+  fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({title_filter_keywords:v})}).catch(()=>{});
+}
+
+// 所在城市 → 同步到 settings（持久化"个人资料"中的城市）
+function saveLocationToSettings(){
+  let v=(document.getElementById('setLocation')?.value||'').trim();
+  fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_location:v})}).catch(()=>{});
+}
+
+// 搜索页开关/输入框 → 实时同步到 settings
+function saveSearchTogglesToSettings(){
+  let data={
+    filter_inactive_hr:document.getElementById('chkFilterInactiveHr')?.checked?'true':'false',
+    dedup_company_by_default:document.getElementById('chkDedupCompany')?.checked?'true':'false',
+    max_hr_inactive_days:(document.getElementById('inactiveDays')?.value||'7').toString()
+  };
+  fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).catch(()=>{});
+}
+function batchApplyAll(maxPages){
+  maxPages=maxPages||1;
+  let blackKeywordsRaw=(document.getElementById('searchTitleBlacklist')?.value||'').trim();
+  let blackKeywords=blackKeywordsRaw?blackKeywordsRaw.split(',').map(s=>s.trim()).filter(Boolean):[];
+  let pending=currentSearchJobs.filter(j=>j.job_url&&j.status!=='applied'&&j.status!=='replied');
+  if(blackKeywords.length){
+    let before=pending.length;
+    pending=pending.filter(j=>{
+      let t=(j.job_title||'');
+      return !blackKeywords.some(kw=>t.toLowerCase().includes(kw.toLowerCase()));
+    });
+    let filtered=before-pending.length;
+    if(filtered>0)toast(`已过滤 ${filtered} 个岗位`,'info',2000);
+  }
+  if(maxPages===1&&!pending.length){toast('没有待投递的岗位，请先搜索','warning');return;}
+  let dedup=document.getElementById('chkDedupCompany')?document.getElementById('chkDedupCompany').checked:true;
+  let filterInactive=document.getElementById('chkFilterInactiveHr')?document.getElementById('chkFilterInactiveHr').checked:true;
+  let inactiveDays=document.getElementById('inactiveDays')?parseInt(document.getElementById('inactiveDays').value||'7',10):7;
+  let btn=document.querySelector('button[onclick="batchApplyAll('+maxPages+')"]');
+  if(maxPages>1){
+    let desc='翻'+maxPages+'页扫描+投递';
+    if(dedup)desc+=', 公司去重';
+    if(filterInactive)desc+=', 跳过'+inactiveDays+'天未活跃';
+    _showPopoverConfirm(btn,desc,function(){
+      let el=document.getElementById('searchStatus');
+      el.innerHTML='<div class="status-banner"><div class="spinner"></div> 翻页扫描投递中（最多 '+maxPages+' 页）...</div>';
+      fetch('/api/jobs/scan-and-apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({max_pages:maxPages,dedup_company:dedup,filter_inactive_hr:filterInactive})}).then(r=>r.json()).then(d=>{
+        if(d.detail){el.innerHTML='<div class="status-banner" style="margin-top:8px;">'+esc(d.detail)+'</div>';toast(d.detail,'error');return;}
+        el.innerHTML='<div class="status-banner success" style="margin-top:8px;">翻 '+d.pages_processed+' 页: 扫描 '+d.total_scanned+' / 投递 '+d.total_applied+' / 跳过公司 '+d.total_skipped_company+' / 跳过HR不活跃 '+d.total_skipped_inactive_hr+' / 失败 '+d.total_failed+'</div>';
+        loadJobs();refreshStatus();
+        toast('翻页投递完成: '+d.total_applied+' 成功','success');
+      }).catch(e=>{el.innerHTML='<div class="status-banner" style="margin-top:8px;">失败: '+esc(e.message)+'</div>';toast('失败: '+e.message,'error');});
+    },'开始投递','btn-success');
+    return;
+  }
+  _showPopoverConfirm(btn,'将投递 '+pending.length+' 个待投递岗位',function(){
+    doBatchApply(pending.map(j=>j.job_url),'searchStatus');
+  },'投递','btn-success');
+}
+async function batchApplyPending(e){
+  if(e)e.stopPropagation();
+  let el=document.getElementById('applyProgress');el.innerHTML='<div style="display:flex;align-items:center;gap:8px;color:var(--text-2);"><div class="spinner"></div> 加载中...</div>';
+  let r=await fetch('/api/jobs?status=pending&limit=200'),d=await r.json();
+  let pending=(d.jobs||[]).filter(j=>j.job_url);
+  if(!pending.length){el.innerHTML='<div class="empty">没有待投递岗位</div>';toast('没有待投递岗位','info');return;}
+  let btn=document.querySelector('button[onclick="batchApplyPending(event)"]');
+  _showPopoverConfirm(btn,'投递 '+pending.length+' 条待投递岗位',function(){
+    doBatchApply(pending.map(j=>j.job_url),'applyProgress');
+  },'开始投递','btn-success');
+  el.innerHTML='';
+}
+function doBatchApply(urls,elId){
+  let done=0,ok=0,total=urls.length,cancelled=false,el=document.getElementById(elId);
+  function up(){if(cancelled)return;let p=Math.round(done/total*100);el.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;"><div style="font-size:13px;font-weight:500;">进度 <span style="color:var(--accent);font-family:var(--mono);">'+done+'</span> / '+total+' <span style="color:var(--text-3);font-weight:400;">('+ok+' 成功)</span></div><button class="btn btn-xs btn-danger" onclick="cancelBatch()">取消</button></div><div class="batch-progress"><div class="batch-progress-bar" style="width:'+p+'%"></div></div><div style="font-size:10.5px;color:var(--text-3);margin-top:6px;text-align:right;font-family:var(--mono);">'+p+'%</div>';}
+  window.cancelBatch=function(){cancelled=true;el.innerHTML='<div class="status-banner" style="margin-top:8px;">已取消: '+done+'/'+total+' ('+ok+' 成功)</div>';loadJobs();refreshStatus();if(elId==='applyProgress')loadApplications();toast('已取消批量投递','info');};
+  async function next(i){if(cancelled||i>=total){if(!cancelled){el.innerHTML='<div class="status-banner success" style="margin-top:8px;">完成: '+ok+'/'+total+' 成功</div>';toast('批量完成: '+ok+'/'+total,'success');}loadJobs();refreshStatus();if(elId==='applyProgress')loadApplications();return;}up();try{let r=await fetch('/api/jobs/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_url:urls[i]})}),d=await r.json();if(d.success)ok++;}catch(ex){}done++;next(i+1);}
+  next(0);
+}
+function batchSearch(e){
+  if(e)e.stopPropagation();
+  let cs=[];
+  let txt=document.getElementById('setSearchKeywords');
+  let singleKw=(document.getElementById('searchKeyword').value||'').trim();
+  if(txt&&txt.value){cs=txt.value.split(',').map(s=>s.trim()).filter(Boolean);}
+  let btn=document.querySelector('button[onclick="batchSearch(event)"]');
+  if(cs.length===0){
+    // 没有批量关键词，清空 searchKeyword，搜索单个关键词或默认推荐
+    document.getElementById('searchKeyword').value='';
+    if(!singleKw){
+      _showPopoverConfirm(btn,'关键词为空将搜索默认推荐岗位',function(){
+        doSearch();
+      },'搜索');
+      return;
+    }
+    doSearch();
+    return;
+  }
+  _showPopoverConfirm(btn,'搜索 '+cs.length+' 个岗位关键词',function(){
+    toast('开始批量搜索 '+cs.length+' 个岗位','info',2000);
+    (async()=>{for(let k of cs){document.getElementById('searchKeyword').value=k;await new Promise(r=>{doSearch();let t=setInterval(()=>{if(!searchInFlight){clearInterval(t);setTimeout(r,200);}},300);});}})();
+  },'搜索');
+}
+
+function esc(s){return s?s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'):'';}
+function attr(s){
+  if(!s)return '';
+  return String(s)
+    .replace(/\r?\n/g,' ')
+    .replace(/\\/g,'\\\\')
+    .replace(/'/g,"&#39;");
+}
+function setVal(id,v){let el=document.getElementById(id);if(el)el.value=v;}
+/* ── 城市下拉框 ── */
+function toggleCityDropdown(){
+  var dd=document.getElementById('cityDropdown');
+  var isOpen=dd.classList.contains('open');
+  dd.classList.toggle('open');
+  if(!isOpen){
+    var trigger=document.getElementById('cityTrigger');
+    var rect=trigger.getBoundingClientRect();
+    var panel=document.getElementById('cityPanel');
+    panel.style.top=(rect.bottom+4)+'px';
+    /* 靠右对齐：panel 右边与 trigger 右边对齐 */
+    panel.style.left=Math.max(8,rect.right-224)+'px';
+  }
+}
+function toggleCityGroup(head){
+  head.parentElement.classList.toggle('open');
+}
+function pickCity(city){
+  document.getElementById('searchCity').value=city;
+  document.getElementById('cityTriggerText').textContent=city;
+  document.getElementById('cityDropdown').classList.remove('open');
+  /* 高亮选中 */
+  document.querySelectorAll('#cityPanel .city-opt').forEach(function(o){
+    o.classList.toggle('active',o.textContent===city);
+  });
+  /* 保存到 localStorage */
+  try{localStorage.setItem('ui_searchCity',city);}catch(e){}
+  /* 加载区县 */
+  loadDistricts(city);
+}
+var selectedDistricts=[];
+var districtCache={};
+function loadDistricts(city){
+  var panel=document.getElementById('districtPanel');
+  selectedDistricts=[];
+  document.getElementById('searchDistrict').value='';
+  document.getElementById('districtTriggerText').textContent='区域不限';
+  document.getElementById('districtTrigger').style.width='';
+  if(!city||city==='全国'){
+    panel.innerHTML='<div class="city-opt active" onclick="pickDistrict(\'\',\'\')">不限</div>';
+    return;
+  }
+  if(districtCache[city]){
+    renderDistricts(districtCache[city]);
+    return;
+  }
+  fetch('/api/districts?city='+encodeURIComponent(city)).then(function(r){return r.json();}).then(function(d){
+    districtCache[city]=d.districts||{};
+    renderDistricts(districtCache[city]);
+  }).catch(function(){
+    panel.innerHTML='<div class="city-opt active" onclick="pickDistrict(\'\',\'\')">不限</div>';
+  });
+}
+function renderDistricts(districts){
+  var panel=document.getElementById('districtPanel');
+  if(!districts||Object.keys(districts).length===0){
+    panel.innerHTML='<div class="city-opt active" onclick="pickDistrict(\'\',\'\')">不限</div>';
+    return;
+  }
+  var html='<div class="city-opt active" onclick="pickDistrict(\'\',\'\')">不限</div>';
+  Object.keys(districts).forEach(function(name){
+    html+='<div class="city-opt district-opt" data-name="'+name+'" data-code="'+districts[name]+'" onclick="pickDistrict(this.dataset.name,this.dataset.code)">'+name+'</div>';
+  });
+  panel.innerHTML=html;
+}
+function toggleDistrictDropdown(){
+  var dd=document.getElementById('districtDropdown');
+  dd.classList.toggle('open');
+  if(dd.classList.contains('open')){
+    var trigger=document.getElementById('districtTrigger');
+    var rect=trigger.getBoundingClientRect();
+    var panel=document.getElementById('districtPanel');
+    panel.style.top=(rect.bottom+4)+'px';
+    panel.style.left=rect.left+'px';
+    panel.style.width=rect.width+'px';
+  }
+}
+function pickDistrict(name,code){
+  if(!name){
+    selectedDistricts=[];
+    document.getElementById('searchDistrict').value='';
+    document.getElementById('districtTriggerText').textContent='区域不限';
+    document.getElementById('districtTrigger').style.width='';
+    document.querySelectorAll('#districtPanel .district-opt').forEach(function(o){o.classList.remove('selected');});
+    var firstOpt=document.querySelector('#districtPanel .city-opt:not(.district-opt)');
+    if(firstOpt)firstOpt.classList.add('active');
+    document.getElementById('districtDropdown').classList.remove('open');
+    return;
+  }
+  var idx=selectedDistricts.findIndex(function(d){return d.name===name;});
+  if(idx>=0){selectedDistricts.splice(idx,1);}
+  else{selectedDistricts.push({name:name,code:code});}
+  var el=document.querySelector('#districtPanel .district-opt[data-name="'+name+'"]');
+  if(el)el.classList.toggle('selected',idx<0);
+  document.getElementById('searchDistrict').value=selectedDistricts.map(function(d){return d.code;}).join(',');
+  if(selectedDistricts.length===0){
+    document.getElementById('districtTriggerText').textContent='区域不限';
+    document.getElementById('districtTrigger').style.width='';
+  }else{
+    var names=selectedDistricts.map(function(d){return d.name;});
+    var txt=names.length>2?names.slice(0,2).join('+')+'... ('+names.length+')':names.join('+');
+    document.getElementById('districtTriggerText').textContent=txt;
+    document.getElementById('districtTrigger').style.width='';
+  }
+  var firstOpt=document.querySelector('#districtPanel .city-opt:not(.district-opt)');
+  if(firstOpt)firstOpt.classList.toggle('active',selectedDistricts.length===0);
+  /* 保存到 localStorage */
+  try{localStorage.setItem('ui_searchDistrict',document.getElementById('searchDistrict').value);}catch(e){}
+}
+/* 点击外部关闭 */
+document.addEventListener('click',function(e){
+  if(!e.target.closest('#cityDropdown'))document.getElementById('cityDropdown').classList.remove('open');
+  if(!e.target.closest('#districtDropdown'))document.getElementById('districtDropdown').classList.remove('open');
+});
+
+function rememberUi(){
+  // 记住搜索页用户上次输入的关键词和城市，刷新后自动恢复
+  let kw=document.getElementById('searchKeyword');
+  let city=document.getElementById('searchCity');
+  let skw=document.getElementById('setSearchKeywords');
+  if(kw)try{let v=localStorage.getItem('ui_searchKeyword');if(v!==null)kw.value=v;}catch(e){}
+  if(skw)try{let v=localStorage.getItem('ui_setSearchKeywords');if(v!==null&&v!=='媒体运营,企业宣传')skw.value=v;}catch(e){}
+  if(city)try{let v=localStorage.getItem('ui_searchCity');
+    if(v!==null&&v!==''&&v!=='德阳'){city.value=v;document.getElementById('cityTriggerText').textContent=v;
+      document.querySelectorAll('#cityPanel .city-opt').forEach(function(o){o.classList.toggle('active',o.textContent===v);});
+      loadDistricts(v);
+    }else{city.value='全国';document.getElementById('cityTriggerText').textContent='全国';loadDistricts('全国');}
+  }catch(e){}
+}
+function rememberUiBind(){
+  ['searchKeyword','searchCity','setSearchKeywords'].forEach(id=>{
+    let el=document.getElementById(id);if(!el)return;
+    el.addEventListener('change',()=>{try{localStorage.setItem('ui_'+id,el.value);}catch(e){}});
+    el.addEventListener('input',()=>{try{localStorage.setItem('ui_'+id,el.value);}catch(e){}});
+  });
+}
+
+function loadSettings(){
+  fetch('/api/settings').then(r=>r.json()).then(d=>{
+    let s=d.settings||{};
+    rememberUi();
+    rememberUiBind();
+    // 同步后端保存的过滤关键字到 UI
+    let bl=document.getElementById('searchTitleBlacklist');if(bl)bl.value=s.title_filter_keywords||'';
+    setVal('setGreeting',s.greeting_template||DEFAULT_GREETING_TEMPLATE);
+    setVal('setGreetingMode',s.greeting_mode||'template');
+    setVal('setStyle',s.ai_reply_style||'professional');
+    setVal('setDailyLimit',s.daily_apply_limit||'15');
+    setVal('setMinDelay',s.min_reply_delay_sec||'30');
+    setVal('setMaxDelay',s.max_reply_delay_sec||'120');
+    setVal('setLocation',s.user_location||'');
+    setVal('setResume',s.resume_summary||DEFAULT_RESUME_SUMMARY);
+    setVal('setWechat',s.wechat_id||'');
+    // 搜索关键词：优先使用 localStorage 中的值（用户最新输入）
+    let skwSaved=false;
+    try{let v=localStorage.getItem('ui_setSearchKeywords');if(v!==null&&v!=='媒体运营,企业宣传'){document.getElementById('setSearchKeywords').value=v;skwSaved=true;}}catch(e){}
+    if(!skwSaved)setVal('setSearchKeywords',s.search_keywords||'');
+    setVal('setAutoReply',s.auto_reply_enabled||'false');
+    setVal('setAIBaseUrl',s.ai_base_url||'');
+    setVal('setAIModel',s.ai_model||'');
+    setVal('setConversationCooldown',s.conversation_cooldown_sec||'60');
+    setVal('setReplyRules',s.reply_rules_system_prompt||DEFAULT_REPLY_PROMPT);
+    setVal('setSmartGreetingPrompt',s.smart_greeting_prompt||DEFAULT_SMART_GREETING_PROMPT);
+    // AI 平台恢复
+    setVal('setAIPlatform',s.ai_platform||'');
+    // 搜索页开关/输入框恢复
+    if(document.getElementById('chkFilterInactiveHr'))document.getElementById('chkFilterInactiveHr').checked=s.filter_inactive_hr!=='false';
+    if(document.getElementById('chkDedupCompany'))document.getElementById('chkDedupCompany').checked=s.dedup_company_by_default!=='false';
+    setVal('inactiveDays',s.max_hr_inactive_days||'7');
+    if(s.ai_key_configured==='true'){document.getElementById('setAIApiKey').placeholder='已配置';document.getElementById('aiKeyStatus').innerHTML='<span style="color:var(--green);">已配置</span>';}
+    else{document.getElementById('aiKeyStatus').innerHTML='<span style="color:var(--orange);">未配置</span>';}
+    toggleGreetingRows();
+  });
+}
+function toggleGreetingRows(){
+  const mode = document.getElementById('setGreetingMode').value;
+  document.getElementById('greetingTemplateRow').style.display = mode === 'template' ? 'flex' : 'none';
+  document.getElementById('smartPromptRow').style.display = mode === 'smart' ? 'flex' : 'none';
+}
+function togglePromptEdit(btn,textareaId){
+  const ta=document.getElementById(textareaId);
+  if(ta.hasAttribute('readonly')){
+    ta.removeAttribute('readonly');
+    ta.style.opacity='1';ta.style.resize='vertical';ta.style.cursor='text';
+    ta.focus();
+    btn.textContent='确定';
+  }else{
+    ta.setAttribute('readonly','');
+    ta.style.opacity='.7';ta.style.resize='none';ta.style.cursor='default';
+    btn.textContent='修改';
+    showToast('保存设置后生效');
+  }
+}
+function showToast(msg){
+  let t=document.createElement('div');
+  t.textContent=msg;
+  Object.assign(t.style,{position:'fixed',top:'50%',left:'50%',transform:'translate(-50%,-50%)',background:'rgba(0,0,0,.8)',color:'#fff',padding:'10px 24px',borderRadius:'8px',fontSize:'14px',zIndex:'99999',pointerEvents:'none',opacity:'0',transition:'opacity .3s'});
+  document.body.appendChild(t);
+  requestAnimationFrame(()=>{t.style.opacity='1';});
+  setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),300);},1800);
+}
+function saveSettings(){
+  function valOr(id, fallback){
+    let el=document.getElementById(id);
+    return el?el.value:fallback;
+  }
+  // 拉一份后端最新设置做基线，避免前端删了某 input 后 PUT 把已存值清空
+  fetch('/api/settings').then(r=>r.json()).then(d=>{
+    let data=d.settings||{};
+    // 用 UI 当前值覆盖
+    data.greeting_mode=valOr('setGreetingMode','template');
+    data.greeting_template=valOr('setGreeting','');
+    data.smart_greeting_prompt=valOr('setSmartGreetingPrompt','');
+    data.user_location=valOr('setLocation','');
+    data.ai_reply_style=valOr('setStyle','professional');
+    data.daily_apply_limit=valOr('setDailyLimit','15');
+    data.min_reply_delay_sec=valOr('setMinDelay','30');
+    data.max_reply_delay_sec=valOr('setMaxDelay','120');
+    data.resume_summary=valOr('setResume','');
+    data.wechat_id=valOr('setWechat','');
+    data.search_keywords=valOr('setSearchKeywords','');
+    data.auto_reply_enabled=valOr('setAutoReply','false');
+    data.ai_base_url=valOr('setAIBaseUrl','');
+    data.ai_model=valOr('setAIModel','');
+    data.conversation_cooldown_sec=valOr('setConversationCooldown','60');
+    data.reply_rules_system_prompt=valOr('setReplyRules','');
+    data.ai_platform=valOr('setAIPlatform','');
+    // 搜索页开关/输入框持久化
+    data.filter_inactive_hr=document.getElementById('chkFilterInactiveHr')?.checked?'true':'false';
+    data.dedup_company_by_default=document.getElementById('chkDedupCompany')?.checked?'true':'false';
+    data.max_hr_inactive_days=valOr('inactiveDays','7');
+    delete data.ai_api_key;
+    delete data.ai_key_configured;
+    let key=document.getElementById('setAIApiKey')?.value||'';
+    if(key)data.ai_api_key=key;
+    if(clearApiKeyFlag){data.ai_api_key='';clearApiKeyFlag=false;}
+  fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(r=>r.json()).then(()=>{
+    let btn=document.getElementById('btnSaveSettings')||document.querySelector('button[onclick="saveSettings()"]');
+    if(btn){
+      let orig=btn.textContent;
+      btn.textContent='✓ 已保存';
+      btn.disabled=true;
+      setTimeout(()=>{btn.textContent=orig;btn.disabled=false;},1500);
+    }
+    if(key){document.getElementById('aiKeyStatus').innerHTML='<span style="color:var(--green);">已配置</span>';document.getElementById('setAIApiKey').placeholder='已配置';document.getElementById('setAIApiKey').value='';}
+    refreshStatus();
+  }).catch(err=>{
+    console.error('saveSettings failed',err);
+    let btn=document.getElementById('btnSaveSettings')||document.querySelector('button[onclick="saveSettings()"]');
+    if(btn){let orig=btn.textContent;btn.textContent='✗ 保存失败';setTimeout(()=>{btn.textContent=orig;},2000);}
+  });
+  });
+}
+const PLATFORMS={deepseek:{baseUrl:'https://api.deepseek.com/v1',models:[{v:'deepseek-v4-pro',t:'DeepSeek V4 Pro'},{v:'deepseek-chat',t:'DeepSeek Chat'},{v:'deepseek-reasoner',t:'DeepSeek Reasoner'}]},openrouter:{baseUrl:'https://openrouter.ai/api/v1',models:[{v:'openrouter/auto',t:'Auto'},{v:'deepseek/deepseek-chat',t:'DeepSeek Chat'},{v:'deepseek/deepseek-r1',t:'DeepSeek R1'},{v:'anthropic/claude-sonnet-4',t:'Claude Sonnet 4'},{v:'google/gemini-2.5-flash',t:'Gemini 2.5 Flash'}]},mimo:{baseUrl:'https://token-plan-cn.xiaomimimo.com/v1',models:[{v:'mimo-v2.5',t:'MiMo'}]},custom:{baseUrl:'',models:[]}};
+function onPlatformChange(){
+  let plat=document.getElementById('setAIPlatform').value,cfg=PLATFORMS[plat];if(!cfg)return;
+  document.getElementById('setAIBaseUrl').value=cfg.baseUrl;
+  let dl=document.getElementById('modelList'),input=document.getElementById('setAIModel');
+  dl.innerHTML='';
+  if(cfg.models.length){cfg.models.forEach(m=>dl.innerHTML+='<option value="'+m.v+'">'+m.t+'</option>');input.value=cfg.models[0].v;input.placeholder='选择或输入模型名';}
+  else{input.value='';input.placeholder='输入模型名...';}
+}
+</script>
+</body>
+</html>

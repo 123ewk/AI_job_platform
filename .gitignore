@@ -1,0 +1,33 @@
+.boss_profile/
+__pycache__/
+*.pyc
+.env
+**/.env
+.DS_Store
+reports/
+.claude/
+.boss_profile/
+.pytest_cache/
+.ruff_cache/
+boss_data.db
+*.bak
+*.db-shm
+*.db-wal
+
+# Runtime artifacts
+*.log
+boss_page.html
+search_result.json
+NUL
+
+# Secrets — never commit
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+id_dsa*
+id_ecdsa*
+*.p12
+*.pfx
+secrets/
+.credentials/
