@@ -800,7 +800,13 @@ def send_greetings_factory(
             kind="send_greetings",
             total=len(jobs),
             unit_fn=build_greeting_unit(engine, jobs, greeting, lock=flow, get_automation=loader, pw_runner=runner),
-            params={"count": len(jobs), "greeting": greeting},
+            params={
+                "count": len(jobs),
+                "greeting": greeting,
+                # 崩溃恢复（Step 4.3）用 job_urls 把 progress_done 下标映射回在途岗位，
+                # 定位"发送结果未知"岗位做隔离，防止续投重复打招呼。
+                "job_urls": [j["job_url"] for j in jobs],
+            },
         )
         return {
             "error": None,

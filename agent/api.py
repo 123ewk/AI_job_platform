@@ -49,6 +49,15 @@ class ChatResponse(BaseModel):
     status: Literal["completed", "ask_user"]
 
 
+class ResolveUnknownRequest(BaseModel):
+    """Step 4.3 人工确认门：崩溃恢复隔离的"结果未知"岗位由人决定可不可重发。"""
+
+    sent_confirm: bool = Field(
+        ..., description="人工确认打招呼是否确实发出：true=已发→置 greeted；false=未发→回 pending 可安全重发"
+    )
+    greeting: str | None = Field(None, description="sent_confirm=true 时补招呼语原文（可缺省）")
+
+
 # ══════════════════════════════════════════════════════════
 #  AgentHub：/ws/agent 客户端集合 + 跨线程广播桥
 # ══════════════════════════════════════════════════════════
@@ -131,6 +140,7 @@ def _get_executor(request_or_ws) -> TaskExecutor:
             engine=db_base.get_engine(),
             broadcast=lambda evt: hub.notify_sync(dict(evt)),
         )
+        ex.recover()  # Step 4.3 启动崩溃恢复（每进程一次）
         state.agent_executor = ex
     return ex
 
@@ -161,6 +171,23 @@ async def chat(req: ChatRequest, http_request: Request) -> ChatResponse:
     return ChatResponse(**result)
 
 
+@agent_router.post("/api/agent/applications/{application_id}/resolve-unknown")
+async def resolve_unknown(application_id: int, body: ResolveUnknownRequest, http_request: Request) -> dict:
+    """Step 4.3 人工确认门：确认崩溃隔离的"结果未知"岗位（sent 与否）→ 决定可不可重发。
+
+    仅供**人工**调用（dashboard/手动），不是 Agent 工具——Agent 不得自证已发。sent_confirm
+    =true 置 greeted（无重复发送），false 回 pending（进库存可安全续投）。
+    """
+    from agent.recovery import resolve_unknown_result  # noqa: PLC0415
+
+    return resolve_unknown_result(
+        db_base.get_engine(),
+        application_id=application_id,
+        sent_confirm=body.sent_confirm,
+        greeting=body.greeting,
+    )
+
+
 @agent_router.websocket("/ws/agent")
 async def ws_agent(websocket: WebSocket) -> None:
     hub = _get_hub(websocket)
@@ -182,4 +209,4 @@ async def ws_agent(websocket: WebSocket) -> None:
         await hub.disconnect(websocket)
 
 
-__all__ = ["AgentHub", "ChatRequest", "ChatResponse", "agent_router"]
+__all__ = ["AgentHub", "ChatRequest", "ChatResponse", "ResolveUnknownRequest", "agent_router"]

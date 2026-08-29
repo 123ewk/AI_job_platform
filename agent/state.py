@@ -133,10 +133,13 @@ class JobStatus:
     - `GREETED`    : send_greetings 打招呼成功后（Phase 4.2 写 'greeted'）
     - `APPLIED` / `REPLIED` / `INTERVIEW` : 存量"已进入投递/对话"状态
     - `FILTERED`   : 投递时被关键词过滤（不可再打招呼）
+    - `UNKNOWN`    : 打招呼**发送结果未知**（崩溃恢复隔离，Step 4.3）——后台任务在途岗位
+      进程中断，浏览器可能已发、DB 未落库 → 置 `unknown` 等待人工确认，**resume 前不回投**
+      （DoD §8.3 无重复发送）。复用现有 applications.status 列，无迁移。
 
     `GREETABLE` = query_jobs(ungreeted=true) 的过滤集合：存量 pending + Agent 新入库
-    discovered。filtered 被排除（已按关键词过滤，不得再打招呼）；PROGRESSED 是
-    "已打过招呼/已投递对话"集合，与 GREETABLE 不相交。
+    discovered。filtered 被排除（已按关键词过滤，不得再打招呼）；unknown 被排除（发送
+    结果未知，须人工确认）；PROGRESSED 是"已打过招呼/已投递对话"集合，与 GREETABLE 不相交。
     """
 
     DISCOVERED: Final[str] = "discovered"
@@ -146,8 +149,9 @@ class JobStatus:
     REPLIED: Final[str] = "replied"
     INTERVIEW: Final[str] = "interview"
     FILTERED: Final[str] = "filtered"
+    UNKNOWN: Final[str] = "unknown"
     ALL: ClassVar[frozenset[str]] = frozenset(
-        {DISCOVERED, PENDING, GREETED, APPLIED, REPLIED, INTERVIEW, FILTERED}
+        {DISCOVERED, PENDING, GREETED, APPLIED, REPLIED, INTERVIEW, FILTERED, UNKNOWN}
     )
     # 已打过招呼 / 已进入投递或对话 → 不可再打招呼
     PROGRESSED: ClassVar[frozenset[str]] = frozenset({GREETED, APPLIED, REPLIED, INTERVIEW})

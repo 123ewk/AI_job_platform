@@ -79,6 +79,16 @@ class TaskExecutor:
     def _get_engine(self):
         return self._engine or db_base.get_engine()
 
+    def recover(self) -> dict:
+        """启动崩溃恢复（Step 4.3）：非终态任务标 interrupted、运行中任务在途岗位置 unknown。
+
+        每进程一次（`agent.api._get_executor` 建执行器时调用）。返回恢复报告
+        （interrupted/unknown_jobs/safe_pending），广播一条 `agent_task_recovered` 事件。
+        """
+        from agent.recovery import recover_interrupted_tasks  # noqa: PLC0415
+
+        return recover_interrupted_tasks(self._get_engine(), broadcast=self._broadcast)
+
     def submit(
         self,
         *,
