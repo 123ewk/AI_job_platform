@@ -15,11 +15,12 @@
 [![CLI](https://img.shields.io/badge/CLI-18_Commands-ec4899?style=for-the-badge)](#-cli-命令)
 [![Web](https://img.shields.io/badge/Web-Dark_UI-8b5cf6?style=for-the-badge)](#-web-控制台)
 [![AI](https://img.shields.io/badge/AI-DeepSeek%20%7C%20OpenRouter%20%7C%20MiMo-3b82f6?style=for-the-badge)](#-ai-模型配置)
+[![Agent](https://img.shields.io/badge/Agent-自然语言操控-10b981?style=for-the-badge)](#-agent-对话层)
 [![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen?style=for-the-badge)](https://github.com/lake121380-source/lakejobai-job-radar/pulls)
 
 <br>
 
-[**快速开始**](#-快速开始) · [**Web 控制台**](#-web-控制台) · [**CLI 命令**](#-cli-命令) · [**核心能力**](#-核心能力) · [**AI 配置**](#-ai-模型配置) · [**API**](#-api-端点参考) · [**排障**](#-诊断与排障) · [**架构**](#-技术架构)
+[**快速开始**](#-快速开始) · [**Web 控制台**](#-web-控制台) · [**CLI 命令**](#-cli-命令) · [**核心能力**](#-核心能力) · [**AI 配置**](#-ai-模型配置) · [**Agent 对话层**](#-agent-对话层) · [**API**](#-api-端点参考) · [**排障**](#-诊断与排障) · [**架构**](#-技术架构)
 
 <br>
 
@@ -299,6 +300,68 @@ $ lakejob scan-apply --max-pages 5
 
 ---
 
+## 🤖 Agent 对话层
+
+> 让 Agent 用**自然语言**操控整个平台：查库存 → 搜岗位 → 打招呼 → 改配置，审计模式下
+> 每个写操作先经人工审批。后台打招呼在独立线程跑，**对话不阻塞**，逐岗位进度实时推送。
+
+```
+POST /api/agent/chat   {"user_input": "看看还有哪些岗位可以打招呼", "execution_mode": "audit"}
+      │
+      ▼  LangGraph 决策环
+plan → (approval_gate) → execute_tool → 回环 plan → report / ask_user
+      │
+      ▼
+ChatResponse  {status: completed | ask_user | pending_approval, report?, approval_pending?}
+```
+
+### 三种执行体验
+
+| 模式 | 默认 | 写操作 | 说明 |
+|---|---|---|---|
+| **审计 audit** | ✅ | 挂起等人工审批 | 每个写工具（改配置 / 打招呼）先返回 `pending_approval`，人工 decide 放行/拒绝；**拒绝 ≠ 终止**，Agent 改道或收尾 |
+| **全权 autonomous** | — | 直接执行 | 写工具直接跑；敏感键 / DRY_RUN 安全开关仍全模式硬拒 |
+
+### 工具（白名单注册制，入参全 Pydantic 校验）
+
+| 工具 | 读写 | 作用 |
+|---|---|---|
+| `query_jobs` | 只读 | 查岗位（`ungreeted=true` 只查可打招呼库存） |
+| `get_progress` | 只读 | 今日已投 / 剩余额度 / 库存计数 / dry_run 标志 |
+| `search_jobs` | 只读（浏览器） | 真实浏览器搜索 → 入库 `discovered`（持 FlowLock 互斥） |
+| `get_conversations_summary` | 只读 | 会话概览（"有没有 HR 回我"） |
+| `update_setting` | **写** | 改白名单内配置（`ai_api_key`/`wechat_id`/`dry_run` 仅人工 `/api/settings` 可改） |
+| `send_greetings` | **写** | 提交后台打招呼任务，立即返回 `task_id`，逐岗位后台发送 |
+
+### 安全与工程护栏
+
+- **审批门**：审计写操作 `interrupt()` 挂起 → `POST /api/agent/approvals/{id}/decide`（404 未知 / 409 已处理）；
+  挂起会话经 SqliteSaver checkpoint 原地恢复。
+- **后台任务**：状态机 `pending→running→completed|failed|interrupted|stopped`；用户手动刹车
+  `POST /api/agent/tasks/{id}/stop`（当前岗位发完即停）；连续失败熔断（连崩 3 家停整批）。
+- **崩溃恢复**：启动时非终态任务标 `interrupted`，在途"结果未知"岗位置 `unknown` 隔离人工确认
+  `POST /api/agent/applications/{id}/resolve-unknown`——**无重复发送**。
+- **DRY_RUN 演练**：`dry_run=1` 时打招呼走完整链路但**只记"将要发送"不发浏览器**，可安全重来。
+- **注入防御链 L0–L5**：用户输入/工具输出分隔符隔离 + 注入指纹告警 + 出口过滤；transcript/
+  审批/WS 全程脱敏（`sk-…`、`138****8000`）。
+- **WS 进度**：`/ws/agent` 实时收 `agent_step` / `agent_task_progress` / `agent_task_done`。
+
+### API
+
+| 方法 | 端点 | 说明 |
+|---|---|---|
+| `POST` | `/api/agent/chat` | 对话回合（`user_input` / `thread_id`? / `execution_mode`?） |
+| `WS` | `/ws/agent` | 步骤进度推送 |
+| `POST` | `/api/agent/approvals/{id}/decide` | 审批放行/拒绝 `{decision: approve\|reject}` |
+| `POST` | `/api/agent/tasks/{id}/stop` | 用户手动停止后台任务（非 Agent 工具） |
+| `POST` | `/api/agent/applications/{id}/resolve-unknown` | 「结果未知」岗位人工确认（非 Agent 工具） |
+
+> 📖 完整使用指南（工具入参、审批流程、崩溃恢复、安全边界、典型场景）见
+> **[docs/AGENT_USAGE.md](docs/AGENT_USAGE.md)**。技术拆解（FlowLock 并发模型、后台执行器线程）
+> 见 [TECHNICAL_ANALYSIS.md](TECHNICAL_ANALYSIS.md) §8.4。
+
+---
+
 ## 📁 项目结构
 
 ```
@@ -314,6 +377,20 @@ $ lakejob scan-apply --max-pages 5
 │   ├── cli.py / client.py / output.py / schema.json
 ├── static/dashboard.html    # Web 前端 (单文件 SPA)
 ├── interview/               # 面试问答子模块
+├── agent/                   # Agent 对话层（自然语言操控）
+│   ├── api.py               # /api/agent/chat + /ws/agent + decide/stop/resolve-unknown
+│   ├── service.py           # AgentService 编排（chat/decide + SqliteSaver 恢复）
+│   ├── graph.py             # LangGraph 决策图（plan→approval_gate→execute→report）
+│   ├── tools.py             # 工具工厂（query_jobs/search_jobs/update_setting/send_greetings…）
+│   ├── state.py             # Agent 状态机常量 + 配置白名单 + 脱敏
+│   ├── executor.py          # 后台任务执行器（TaskExecutor + 停止 + 熔断）
+│   ├── recovery.py          # 崩溃恢复 + 结果未知岗位人工确认门
+│   ├── flow_lock.py         # 浏览器互斥锁（FlowLock）
+│   ├── defense.py           # 注入防御链 L0-L5
+│   └── log_config.py        # 结构化日志 + 脱敏
+├── db/                      # SQLAlchemy 数据层 + Alembic + 存量迁移
+├── docs/                    # 设计文档
+│   └── AGENT_USAGE.md       # Agent 对话层使用指南
 ├── SKILL.md                 # Agent 集成指南
 ├── CHANGELOG.md             # 版本变更
 ├── CHANGES.md               # 优化变更说明

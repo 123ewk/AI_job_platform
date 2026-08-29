@@ -2,7 +2,10 @@
 
 > 一份针对本项目的完整技术拆解：数据怎么来的、打招呼怎么发的、用什么方式"监听"、为什么用 Firefox、扫码登录后状态为什么就"同步"了、点击本地页面会话为什么 BOSS 也会变、以及完整的数据流过程。
 >
-> 本文基于对仓库源码的逐行阅读（`boss_firefox.py` / `boss_automation.py` / `boss_app.py` / `boss_state.py` / `boss_replier.py` / `boss_company.py` / `boss_geo.py` / `static/dashboard.html` / `lakejob_cli/`），所有结论都标注了文件与行号，可自行核对。
+> 本文基于对仓库源码的逐行阅读（`boss_firefox.py` / `boss_automation.py` / `boss_app.py` / `boss_state.py` / `boss_replier.py` / `boss_company.py` / `boss_geo.py` / `static/dashboard.html` / `lakejob_cli/` / `agent/`），所有结论都标注了文件与行号，可自行核对。
+>
+> 第 2 版增补（Agent 化改造）：`§2` 补 Agent 模块清单、`§8.4` 并发模型补 **FlowLock** 与后台
+> 执行器线程模型、`§10/§11` 补互斥与后台任务相关条目。
 
 ---
 
@@ -17,6 +20,7 @@
 - [7. 为什么用 Firefox,其它浏览器不行吗](#7-为什么用-firefox其它浏览器不行吗)
 - [8. 状态同步原理(扫码登录/本地↔BOSS)](#8-状态同步原理扫码登录本地boss)
 - [9. 完整数据流(四条链路)](#9-完整数据流四条链路)
+  - [9.1 链路 E:Agent 自然语言操控](#91-链路-eagent-自然语言操控)
 - [10. 每一项技术分别是干什么的](#10-每一项技术分别是干什么的)
 - [11. 你可能没注意到的技术细节](#11-你可能没注意到的技术细节)
 - [12. 风险与边界](#12-风险与边界)
@@ -61,6 +65,21 @@
 | `tests/` | — | 单测 | `test_smart_send.py`(纯函数+实例方法)、`test_boss_state.py`(数据层) |
 
 > **注意类继承关系**：`BossAutomation(boss_automation)` **继承自** `BossScraper(boss_firefox)`。所以浏览器启动、登录、搜索采集的能力都来自 `boss_firefox.py`,交互能力在子类 `boss_automation.py` 中扩展。
+
+**Agent 对话层（Phase 2–5 新增，`agent/` 包）**——用自然语言操控上面这套浏览器与数据，所有动作仍落在**同一个真实 Firefox / 同一份 SQLite** 上：
+
+| 文件 | 职责 | 关键内容 |
+|---|---|---|
+| `agent/api.py` | 对话 API 传输层 | `POST /api/agent/chat` + `WS /ws/agent`（步骤进度）+ `decide`/`stop`/`resolve-unknown` 三个**人工**端点；`AgentHub` 用 asyncio.Queue 做跨线程广播桥（graph 在 to_thread worker 里触发 on_step） |
+| `agent/service.py` | 决策环编排 | `AgentService.chat/decide`；生产缺省 SqliteSaver 文件 checkpoint（与主库同目录），跨调用原地恢复挂起会话；`default_registry` 注册全部工具 |
+| `agent/graph.py` | LangGraph 决策图 | `plan → (approval_gate) → execute_tool → 回环 plan → report/ask_user`；审计写工具在 approval_gate `interrupt()` 挂起，`Command(resume=approve/reject)` 放行/拒绝；`recursion_limit=12` 熔断 |
+| `agent/tools.py` | 工具工厂 | `query_jobs`/`get_progress`/`update_setting`/`search_jobs`/`get_conversations_summary`/`send_greetings`；Pydantic 入参（L3）、`build_greeting_unit` 包既有 `apply_batch` |
+| `agent/state.py` | 状态机常量单一真源 | `ExecutionMode`/`SessionStatus`/`TaskStatus`/`ApprovalStatus`/`StepStatus`/`StepKind`/`JobStatus`；`SETTINGS_WHITELIST`/`SENSITIVE_SETTING_KEYS`/`SAFETY_SETTING_KEYS`；`mask_sensitive` 脱敏 |
+| `agent/executor.py` | 后台任务执行器 | `TaskExecutor`：自有后台事件循环线程 + `submit`（任意线程 `run_coroutine_threadsafe`）+ 逐岗位进度广播 + `submit_stop` 单位间刹车 + 连续失败熔断 |
+| `agent/recovery.py` | 崩溃恢复 | 启动时非终态任务标 `interrupted`；在途岗位置 `unknown`（结果未知隔离人工确认）；`resolve_unknown_result` 人工确认门 |
+| `agent/flow_lock.py` | 浏览器互斥锁 | `FlowLock`（owner 标签 + threading.Lock + 阻塞排队/非阻塞查询）；模块单例 `default_flow_lock` 与 boss_app 监控循环共享（§8.4） |
+| `agent/defense.py` | 注入防御链 | L0 用户输入分隔符 / L1 不可信输出包裹 / L2 注入指纹告警 / L5 出口过滤；`SYSTEM_PROMPT` 服务端常量 |
+| `agent/log_config.py` | 结构化日志 | JSON 日志基线 + `mask_value` 脱敏（手机号 `138****8000`、sk- token 保留首尾） |
 
 ---
 
@@ -194,7 +213,7 @@ BOSS 显示的是"刚刚活跃/今日活跃/3日内活跃/本周活跃/30日内�
 
 浏览器一启动(`/api/system/start`)、或重新登录、或服务启动时,就创建一个 asyncio 后台任务。循环体:
 1. 随机睡 `min_reply_delay_sec~max_reply_delay_sec`(默认 15-20s,**加上随机抖动**);
-2. `monitor_paused` 则跳过本轮;
+2. `monitor_paused` **或 `flow_lock.locked()`**(Agent 浏览器工具/打招呼任务正在用浏览器,§8.4)则跳过本轮;
 3. `automation.heartbeat()` 轻量检查登录态(不导航、不触发反爬),**连续 2 次失败 → 广播 `session_expired` 并退出**;
 4. 每轮 `keep_alive()` 保活:已登录时**只在聊天页轻量滚动/移动鼠标**,避免频繁 reload 被检测(`boss_automation.py:268-289`);
 5. `auto_reply_enabled` 为 true 才执行 `run_chat_monitor_cycle()`。
@@ -299,10 +318,63 @@ self._ctx = self._pw.firefox.launch_persistent_context(str(PROFILE_DIR), **kw)
 
 ### 8.4 线程/并发模型(同步之所以能串起来的前提)
 
+**浏览器只有真实的一个实例**，但有三类消费者要碰它：Web 端 HTTP 请求、后台监控循环、
+Agent 浏览器类工具（`search_jobs`）与后台打招呼任务。三者的互斥是整套状态同步能成立的前提。
+
+**① pw 单线程池（一切浏览器操作的唯一执行通道）**
+
 FastAPI 是 asyncio,Playwright 是同步 API 且**要求所有浏览器操作都在同一线程**。所以:
 - `_playwright_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pw")`(`boss_app.py:135`);
 - `_run_pw(fn)`(`boss_app.py:138-150`)把同步操作塞进这个单线程池,执行前还 `asyncio.set_event_loop(None)` 清掉 asyncio 状态(否则 Playwright 检测到 event loop 会拒绝运行);
-- 所有需要碰浏览器的端点都包在 `_run_pw(...)` 里,并用 `asyncio.Lock`(`browser_sync_lock`)互斥,避免多个请求同时操作浏览器打架(锁被占时直接返回本地缓存,`boss_app.py:2090-2097`)。
+- 所有需要碰浏览器的端点都包在 `_run_pw(...)` 里,避免多个请求同时操作浏览器打架。
+
+**② FlowLock：把「谁在用、让给谁」从布尔升级成显式互斥（Agent 化改造 Phase 3.3+，§4.6）**
+
+存量只靠 pw 单线程池保证"不并发"，但表达不了"谁在用、让给谁"：`monitor_paused` 布尔只管
+用户暂停，`browser_sync_lock`（asyncio.Lock）只管会话同步。Agent 化改造把二者升级为
+**带 owner 标签的显式互斥锁 `FlowLock`**（`agent/flow_lock.py`，threading.Lock 底座，
+跨工作线程与事件循环线程安全）——它是 Agent 浏览器类工具与 HR 监控轮询**共享**的互斥通道：
+
+- **Agent 工具持有锁**：`search_jobs`（`agent/tools.py` search_jobs_factory）以及后台
+  `send_greetings` 每个浏览器单位（`build_greeting_unit`）执行期间 `acquire(owner="agent:search_jobs:…")`
+  持有锁——owner 标签供日志/状态展示；
+- **监控循环让路**：`chat_monitor_loop` 每轮先非阻塞 `flow_lock.locked()` 查询，被占则**跳过本轮**
+  （`boss_app.py:2542-2543` `if monitor_paused or flow_lock.locked(): continue`）——Agent 用浏览器时
+  HR 轮询不抢（§4.6"持有期间跳过本轮"）；
+- **Agent 排队而非并发**：监控循环/同步流程持有期间，Agent 工具 `acquire(owner, blocking=True)`
+  **排队等待**而不是报错（§4.6"排队而非并发"，Step 3.3 验收测试焦点）——浏览器绝不会被两个
+  使用者同时操作；
+- **模块单例**：`default_flow_lock`（`agent/flow_lock.py`）由 boss_app 监控循环与 agent 工具共享，
+  `release()` 幂等（未持有调用 no-op），等价替换 `monitor_paused` 恢复语义。
+
+```
+chat_monitor_loop（事件循环线程）     Agent search_jobs / send_greetings 单位
+        │  每轮 flow_lock.locked()           │  acquire(owner, blocking=True)
+        │  被占 → 跳过本轮                    │  排队等待（§4.6 排队而非并发）
+        └──────────────┬─────────────────────┘
+                       ▼
+              FlowLock（owner 标签互斥）
+                       │
+                       ▼
+        pw 单线程池 _run_pw（ThreadPoolExecutor(1)） → 真实 Firefox
+```
+
+### 8.5 Agent 后台任务并发（TaskExecutor 自有事件循环线程）
+
+`send_greetings` 的**后台打招呼任务**由 `TaskExecutor`（`agent/executor.py`，Phase 4）驱动，
+与 FastAPI 主循环完全解耦：
+
+- **自有后台事件循环线程**：`_ensure_loop` 懒启动一个 daemon 线程 `loop.run_forever()`；
+  `submit()` 从**任意线程**调度——决策图在 `asyncio.to_thread` worker 线程里（无运行中的事件
+  循环，`create_task` 用不了）经 `run_coroutine_threadsafe` 安全投递；调用线程有运行中循环
+  （测试）则直接 `create_task`。
+- **单位 = 一个岗位**：每个单位函数若为协程直接 `await`，同步函数经 `asyncio.to_thread` 丢线程池
+  （浏览器操作仍走 §8.4 的 pw 单线程池，不阻塞执行器循环）；每完成一个单位 `progress_done+1` 并
+  广播 `agent_task_progress`（经 `AgentHub` → `/ws/agent`，对话里 Agent 能答"还剩 N 个"）。
+- **停止/熔断都在单位之间**：`submit_stop` 打 threading.Event 标志，单位之间检查（绝不打断正在发
+  送的岗位）；连续失败熔断 `consecutive_fail_threshold=3` 同理在单位边界判定。
+- **DB**：本地 SQLite（WAL）微秒级写，在循环线程内直接执行；`db.base.get_engine()` 每线程独立
+  连接（Agent 工具、graph worker、执行器后台线程各用各的连接）。
 
 ---
 
@@ -367,6 +439,29 @@ chat_monitor_loop() 每15-20s(+抖动)：
 前端 WS → 聊天页 loadConversations + loadMessages 刷新
 ```
 
+### 9.1 链路 E：Agent 自然语言操控（审计模式）
+
+Agent 的所有"动作"最终仍落到上面四条链路（搜索/投递/读会话），只是入口从点击/CLI 变成了
+自然语言决策环：
+
+```
+curl POST /api/agent/chat {"user_input":"…", "execution_mode":"audit"}
+  └ AgentService.chat → asyncio.to_thread → build_agent_graph().invoke
+  └ LangGraph 决策环（agent/graph.py）:
+      plan（planner=LLM function-calling）→ registry.schemas() 给 LLM 工具声明
+      → 只读工具（query_jobs/get_progress/search_jobs/…）write=False 直放
+      → 写工具（send_greetings/update_setting）write=True → approval_gate interrupt() 挂起
+  └ 挂起 → chat 返回 status=pending_approval + approval_pending（含 approval_id）
+  └ 人工 POST /api/agent/approvals/{id}/decide {decision} → Command(resume) 恢复 checkpoint
+      approve → 写工具执行；reject → "用户拒绝"回灌 trace，Agent 改道/收尾
+  └ send_greetings → TaskExecutor.submit → 后台逐岗位 apply_batch（§5.3 链路 B 的单岗位版）
+      → 进度/终态 agent_task_progress/agent_task_done → AgentHub → /ws/agent 广播
+  └ report → 落 agent_sessions.final_report → ChatResponse
+```
+
+关键点：**浏览器与数据全程复用既有通道**（pw 单线程池 + FlowLock 互斥 + 同一 SQLite），
+Agent 只是新的"调用者"，监控循环/Web 端照常运行不受影响。详细使用见 `docs/AGENT_USAGE.md`。
+
 ---
 
 ## 10. 每一项技术分别是干什么的
@@ -380,6 +475,8 @@ chat_monitor_loop() 每15-20s(+抖动)：
 | **FastAPI + uvicorn** | 后端 Web 服务,~40 个 REST 端点 + 1 个 `/ws` WebSocket |
 | **WebSocket** | 后端→前端的实时事件推送(`new_messages`/`search_complete`/`session_expired` 等),实现"BOSS 有动静页面就变" |
 | **`ThreadPoolExecutor(max_workers=1)` + `_run_pw`** | 让同步 Playwright 与 asyncio FastAPI 共存:所有浏览器操作串行执行在唯一线程,执行前清空 event loop 状态 |
+| **`FlowLock`（`agent/flow_lock.py`）** | 带 owner 标签的浏览器互斥锁,升级存量 `browser_sync_lock`/`monitor_paused`:Agent 浏览器工具持有期间监控循环跳过本轮;监控持有期间 Agent 工具阻塞排队(§8.4) |
+| **`TaskExecutor`（`agent/executor.py`）** | 后台打招呼任务执行器:自有后台事件循环线程,`submit` 跨线程调度,逐岗位进度广播,单位间停止/熔断(§8.5) |
 | **SQLite(WAL 模式)** | 本地数据镜像:岗位/会话/消息/设置/每日统计/候选池/公司缓存。WAL 支持多线程读 |
 | **单文件 SPA dashboard.html(Vanilla JS)** | 无构建无 CDN 的深色控制台,HTTP 拉取 + WS 推送双通道渲染 |
 | **Click + httpx(lakejob CLI)** | 18 条命令,stdout 只输出 JSON 信封,供 AI Agent 以 subprocess 方式调用;CLI 只是后端 HTTP 客户端,不直接碰浏览器 |
@@ -412,7 +509,7 @@ chat_monitor_loop() 每15-20s(+抖动)：
 
 ### 11.3 浏览器/并发工程
 - **`_run_pw` 清 event loop 的 hack**:`asyncio.set_event_loop(None)` 是让 Playwright sync API 在 asyncio 环境里能跑的关键(否则报 "Playwright sync API is not allowed in event loop")。
-- **`browser_sync_lock`** 全局互斥,防止 `sync` 和监控循环同时抢浏览器。
+- **`browser_sync_lock` → `FlowLock`** 存量用 `asyncio.Lock` 只互斥会话同步;Agent 化改造升级为 `FlowLock`(threading 底座 + owner 标签),把 `monitor_paused` 布尔与 `browser_sync_lock` 统一成"谁在用、让给谁"的显式互斥(§8.4)。
 - **CORS 全开** `allow_origins=["*"]`(`boss_app.py:78-84`)——本工具只在 127.0.0.1 本地跑,方便开发。
 - **print 打时间戳**:模块加载时 monkeypatch 了 `builtins.print`,所有后端日志自动带 `[HH:MM:SS]` 前缀(`boss_app.py:22-27`),纯调试便利。
 - **Windows 编码修复**:`boss_firefox.py:34` 把 stdout 包成 utf-8 TextIOWrapper,避免中文日志在 Windows 控制台乱码。
