@@ -8,37 +8,28 @@ import logging
 import random
 import re
 import time
-from typing import Optional, List, Dict, Any
+from typing import List, Optional
 
 from playwright.sync_api import Locator
 
-from boss_firefox import BossScraper, pause, decode_salary
-from boss_state import (
-    init_db,
+from boss_firefox import BossScraper, decode_salary, pause
+from db.backend import (
     add_application,
+    add_message,
     get_application_by_url,
-    update_application_status,
+    get_conversation,
+    get_or_create_conversation,
     get_setting,
     get_today_application_count,
-    get_or_create_conversation,
-    get_conversation,
-    add_message,
-    get_messages,
-    get_recent_messages,
-    replace_conversation_messages,
-    message_exists,
-    update_conversation_last_message,
-    update_conversation_status,
-    update_conversation_interest,
-    update_conversation_wechat,
-    increment_daily_stat,
     get_today_auto_reply_count,
-    find_conversation_by_hr_name,
-    get_daily_stats,
     has_company_been_applied,
-    list_applied_companies,
-    save_company_cache,
-    get_cached_company,
+    increment_daily_stat,
+    init_db,
+    replace_conversation_messages,
+    update_application_status,
+    update_conversation_interest,
+    update_conversation_last_message,
+    update_conversation_wechat,
 )
 
 # ── 选择器配置（BOSS UI 改版时只改这里，也可通过设置表覆盖）──
@@ -135,8 +126,9 @@ SELECTORS = {
 def _merge_selectors():
     """合并 settings 表中的选择器覆盖。"""
     try:
-        from boss_state import get_setting
         import json as _json
+
+        from db.backend import get_setting
 
         raw = get_setting("selector_overrides", "")
         if raw:
@@ -231,7 +223,6 @@ class BossAutomation(BossScraper):
     def check_page_safety(self) -> bool:
         """所有自动化操作前检查页面安全状态。"""
         try:
-            url = self.page.url
             body = self.page.inner_text("body")
             body_lower = body.lower()
 
@@ -433,9 +424,9 @@ class BossAutomation(BossScraper):
             if chat_input and greeting_text:
                 greeting_sent = self.send_message(greeting_text)
                 if greeting_sent:
-                    print(f"  ✅ 招呼语已发送")
+                    print("  ✅ 招呼语已发送")
                 else:
-                    print(f"  ⚠️ 招招呼语发送失败")
+                    print("  ⚠️ 招招呼语发送失败")
             elif not chat_input:
                 cur_url = ""
                 try:
@@ -464,7 +455,6 @@ class BossAutomation(BossScraper):
             hr_company = ""
             job_title = ""
             try:
-                from boss_firefox import BossScraper
 
                 hr_info = self.page.evaluate("""() => {
                     const body = (document.body || {}).innerText || '';
@@ -500,7 +490,7 @@ class BossAutomation(BossScraper):
                 get_or_create_conversation(app_id, hr_name, hr_company, job_title, hr_title)
 
             increment_daily_stat("applications_sent")
-            print(f"  ✅ 投递成功")
+            print("  ✅ 投递成功")
             log.info(
                 "apply_done",  # 结构化投递日志：成功
                 extra={"tool": "apply", "job_url": job_url, "application_id": app_id},
@@ -610,7 +600,6 @@ class BossAutomation(BossScraper):
             try:
                 el = self.page.locator(sel).first
                 if el and el.is_visible(timeout=2000):
-                    href = el.get_attribute("href") or ""
                     disabled = el.get_attribute("class") or ""
                     if "disabled" in disabled.lower():
                         return False
@@ -691,12 +680,12 @@ class BossAutomation(BossScraper):
                 elif not r.get("success"):
                     result["total_failed"] += 1
                     if "上限" in r.get("message", ""):
-                        print(f"  ⛔ 达到日限, 停止翻页")
+                        print("  ⛔ 达到日限, 停止翻页")
                         return result
 
             if page_idx < max_pages - 1:
                 if not self.go_to_next_page():
-                    print(f"  ℹ️ 已是最后一页, 停止翻页")
+                    print("  ℹ️ 已是最后一页, 停止翻页")
                     break
 
         return result
@@ -788,6 +777,10 @@ class BossAutomation(BossScraper):
                         }""")
                             or ""
                         )
+                    # 会话卡未解析公司/职位字段，输出 dict 引用它们 —— 给安全空默认避免 NameError
+                    # （lint 进入后暴露：原代码 dict 引用 hr_company/hr_title 但从未赋值）
+                    hr_company = ""
+                    hr_title = ""
                     # 提取岗位名：优先精确 class，兜底用文本匹配
                     job_title = ""
                     try:
@@ -1053,9 +1046,6 @@ class BossAutomation(BossScraper):
                 }
                 return result;
             }""")
-            job_title = (info.get('jobTitle') or '') if info else ''
-            salary = (info.get('salary') or '') if info else ''
-            city = (info.get('city') or '') if info else ''
             if info.get('_cityDebug'):
                 print(f"  [header诊断] {info['_cityDebug']}")
             return info or {'jobTitle': '', 'salary': '', 'city': ''}
@@ -1065,7 +1055,7 @@ class BossAutomation(BossScraper):
 
     def open_conversation_by_name(self, hr_name: str) -> bool:
         """在聊天页中按 HR 名字定位并打开对应会话。
-        
+
         先在当前标签页查找，找不到则切换到「全部」标签查找。
         """
         try:
@@ -1134,12 +1124,12 @@ class BossAutomation(BossScraper):
             if clicked:
                 pause(1, 2)
                 return True
-            
+
             # 当前标签没找到，切换到「全部」标签再试一次
             print(f"  [会话] 当前标签未找到 '{hr_name}'，切换到「全部」标签查找")
             self.switch_to_all_conversations()
             pause(1, 2)
-            
+
             # 在「全部」标签中重新查找
             for sel in [
                 f'li[role="listitem"]:has-text("{hr_name}")',
@@ -1155,7 +1145,7 @@ class BossAutomation(BossScraper):
                         return True
                 except Exception:
                     pass
-            
+
             # 「全部」标签兜底查找
             clicked2 = self.page.evaluate(
                 """(name) => {
@@ -1199,7 +1189,7 @@ class BossAutomation(BossScraper):
             if clicked2:
                 pause(1, 2)
                 return True
-            
+
             return False
         except Exception as e:
             print(f"  ⚠️ 打开会话失败 ({hr_name}): {e}")
@@ -1502,12 +1492,12 @@ class BossAutomation(BossScraper):
 
     def scan_current_page(self) -> List[dict]:
         """扫描当前BOSS搜索结果页，提取所有可见岗位卡片。不跳转，只读当前页。"""
-        print(f"  [扫描] 开始扫描当前页面...")
+        print("  [扫描] 开始扫描当前页面...")
         self._scroll_all()
         jobs = self._extract_job_cards()
         if not jobs:
-            lines = [l.strip() for l in self.page.inner_text("body").split("\n") if l.strip()]
-            sal_idx = [i for i, l in enumerate(lines) if re.search(r"\d+[-~]\d+K", decode_salary(l), re.I)]
+            lines = [line.strip() for line in self.page.inner_text("body").split("\n") if line.strip()]
+            sal_idx = [i for i, line in enumerate(lines) if re.search(r"\d+[-~]\d+K", decode_salary(line), re.I)]
             for n, si in enumerate(sal_idx):
                 if n > 0 and si - sal_idx[n - 1] < 3:
                     continue
@@ -1550,7 +1540,7 @@ class BossAutomation(BossScraper):
                 )
             links = self._extract_links()
             if links:
-                lm = {l["title"][:12]: l["href"] for l in links if l["title"][:12]}
+                lm = {link["title"][:12]: link["href"] for link in links if link["title"][:12]}
                 for j in jobs:
                     if not j["url"] and j["title"][:12] in lm:
                         j["url"] = lm[j["title"][:12]]
@@ -1623,14 +1613,14 @@ class BossAutomation(BossScraper):
         except Exception:
             pass
 
-        from boss_state import list_active_conversations
+        from db.backend import list_active_conversations
 
         known_convs = list_active_conversations()
         print(f"  [监控] 数据库已知活跃会话: {len(known_convs)}")
 
         # 已在导航时切到「未读」Tab，当前列表都是未读。每轮上限 3 个
         if not conversations:
-            print(f"  [监控] 无未读消息，跳过本轮")
+            print("  [监控] 无未读消息，跳过本轮")
             return result
         if len(conversations) > 3:
             print(f"  [监控] 未读会话: {len(conversations)} 个，本轮只处理前3个")
@@ -1638,9 +1628,6 @@ class BossAutomation(BossScraper):
 
         for conv_data in conversations:
             text = conv_data.get("text", "")
-            has_unread = conv_data.get("has_unread", False)
-            element = conv_data.get("element")
-
             if not text:
                 continue
 
@@ -1661,7 +1648,7 @@ class BossAutomation(BossScraper):
                         break
 
             if not matched_conv:
-                lines = [l.strip() for l in text.split("\n") if l.strip()]
+                lines = [line.strip() for line in text.split("\n") if line.strip()]
                 hr_name = conv_data.get("hr_name", "") or lines[0] if lines else ""
                 hr_name = hr_name[:20] if len(hr_name) > 20 else hr_name
 
@@ -1723,7 +1710,7 @@ class BossAutomation(BossScraper):
                         old_name in extracted_name or extracted_name in old_name or len(extracted_name) < len(old_name)
                     ):
                         try:
-                            from boss_state import get_db as _gdb2
+                            from db.backend import get_db as _gdb2
 
                             _gdb2().execute("UPDATE conversations SET hr_name=? WHERE id=?", (extracted_name, conv_id))
                             _gdb2().commit()
@@ -1776,7 +1763,7 @@ class BossAutomation(BossScraper):
             # 无论是否有消息，都更新在线状态和岗位信息（从精确 class 提取）
             # 注意：必须在 if clean_msgs 之外，否则没消息时不更新
             try:
-                from boss_state import get_db
+                from db.backend import get_db
                 db = get_db()
                 updates = []
                 params = []
@@ -1817,10 +1804,7 @@ class BossAutomation(BossScraper):
                     "今日推荐",
                     "该Boss已查看了你的简历",
                 )
-                last_content = (last_msg.get("content") or "").strip()
-                is_system_msg = last_msg.get("sender") == "hr" and len(last_content) <= 80 and any(
-                    last_content.startswith(p) for p in _system_prefixes
-                )
+                # 未回复检测留待后续版本：last_content 未使用（原半成品残留）
                 # 先不更新 last_message，等未回复检测完成后一起更新
 
                 # 从 HR 消息里提取微信号
@@ -1913,7 +1897,7 @@ class BossAutomation(BossScraper):
                     job_desc = ""
                     app_id = matched_conv.get("application_id")
                     if app_id:
-                        from boss_state import get_application
+                        from db.backend import get_application
 
                         app = get_application(app_id)
                         if app:
@@ -1938,9 +1922,9 @@ class BossAutomation(BossScraper):
                         # 发简历：HR明确要求简历时，且未发送过
                         if any(kw in msg_lower for kw in ("简历", "cv", "resume")):
                             if not matched_conv.get("resume_sent"):
-                                print(f"  [监控] HR要简历，正在发送...")
+                                print("  [监控] HR要简历，正在发送...")
                                 if self.send_resume():
-                                    from boss_state import mark_resume_sent
+                                    from db.backend import mark_resume_sent
 
                                     mark_resume_sent(conv_id)
                                     pause(1, 2)
@@ -1959,16 +1943,16 @@ class BossAutomation(BossScraper):
                         )
                         if any(kw in msg_lower for kw in wechat_keywords):
                             if not matched_conv.get("hr_wechat"):
-                                print(f"  [监控] HR要微信，正在发送...")
+                                print("  [监控] HR要微信，正在发送...")
                                 self.send_wechat(hr_name_to_open)
                                 pause(1, 2)
 
                         # 换电话：HR明确要电话时，且未发送过
                         if any(kw in msg_lower for kw in ("电话", "手机号")):
                             if not matched_conv.get("phone_shared"):
-                                print(f"  [监控] HR要电话，正在发送...")
+                                print("  [监控] HR要电话，正在发送...")
                                 if self.send_phone(hr_name_to_open):
-                                    from boss_state import mark_phone_shared
+                                    from db.backend import mark_phone_shared
 
                                     mark_phone_shared(conv_id)
                                     pause(1, 2)
@@ -1984,14 +1968,14 @@ class BossAutomation(BossScraper):
                             if interest:
                                 update_conversation_interest(conv_id, interest)
                                 print(f"  [监控] HR兴趣度: {interest}")
-                            print(f"  [监控] 回复已发送")
+                            print("  [监控] 回复已发送")
                         else:
-                            print(f"  [监控] 回复发送失败!")
+                            print("  [监控] 回复发送失败!")
                         pause(5, 15)
                 except Exception as e:
                     print(f"  ⚠️ AI回复生成失败: {e}")
             elif unreplied_hr_msg and not auto_reply_enabled:
-                print(f"  [监控] 自动回复已关闭，跳过")
+                print("  [监控] 自动回复已关闭，跳过")
 
             # 下一个会话前确保输入框已清空，避免残留文字
             try:
