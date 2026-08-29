@@ -252,7 +252,10 @@ def test_graph_audit_executes_query_jobs_without_approval():
     def _planner(messages, tool_schemas):
         tool_msgs = [m for m in messages if m.get("role") == "tool"]
         if tool_msgs:
-            tool_outputs.append(json.loads(tool_msgs[-1]["content"]))
+            # Step 5.2 L1：工具输出回灌前已包 <untrusted>…</untrusted>（数据非指令）——先剥再解析
+            content = tool_msgs[-1]["content"]
+            assert content.startswith("<untrusted>") and content.endswith("</untrusted>")
+            tool_outputs.append(json.loads(content[len("<untrusted>") : -len("</untrusted>")]))
             return {"action": "report", "content": "库存已查"}
         return {"action": "tool", "name": "query_jobs", "arguments": {"ungreeted": True}}
 

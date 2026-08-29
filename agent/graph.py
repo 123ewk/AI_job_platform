@@ -30,7 +30,7 @@ from langgraph.types import interrupt
 from sqlalchemy import select
 from sqlalchemy.orm import Session as SASession
 
-from agent import state
+from agent import defense, state
 from db import models
 
 DEFAULT_RECURSION_LIMIT = 12  # §4.1 熔断：替代手写 max_steps
@@ -259,6 +259,10 @@ def build_agent_graph(*, planner, registry: ToolRegistry, engine, checkpointer=N
     def _plan(st: AgentState) -> dict:
         sid = _ensure_session(engine, st["thread_id"], st.get("user_input", ""), st.get("execution_mode", "audit"))
         trace = list(st.get("trace", []))
+        # L0 隔离（Step 5.2）：首次把用户输入经 <user_input>…</user_input> 数据化注入 trace，
+        # 后续 replan 已有 user 消息即跳过（幂等）——所有 planner 看到正确的"数据非指令"边界。
+        if not any(m.get("role") == "user" for m in trace):
+            trace = [{"role": "user", "content": defense.wrap_user_input(st.get("user_input", ""))}] + trace
         decision = planner(messages=trace, tool_schemas=registry.schemas())
         step_id = _persist_step(engine, sid, state.StepKind.PLAN, llm_decision=decision)
         _notify(state.StepKind.PLAN, step_id=step_id, llm_decision=decision)
@@ -315,11 +319,17 @@ def build_agent_graph(*, planner, registry: ToolRegistry, engine, checkpointer=N
         )
         _notify(state.StepKind.EXECUTE, step_id=step_id, tool_name=name, tool_input=args, llm_decision=dec)
         resp = {"tool": name, "output": out}
+        # §3.2 脱敏后再回灌；Step 5.2：工具输出是**不可信输入** → L1 包 <untrusted>…</untrusted>，
+        # L2 跑注入检测（命中记 WARNING；REJECT_FEEDBACK_ON_HIT 开启时可拒绝回灌 LLM）。
+        untrusted = json.dumps(state.mask_sensitive(resp), ensure_ascii=False)
+        if defense.should_reject_feedback(untrusted):
+            untrusted = defense.wrap_untrusted("[已拦截注入内容，未回灌]")
+        else:
+            untrusted = defense.wrap_untrusted(untrusted)
+            defense.detect_injection(untrusted)  # 命中即 WARNING 日志（默认只记不拦）
         return {
             "tool_result": resp,
-            # §3.2 脱敏：工具输出回灌 trace（planner 可见 + checkpoint 持久）前掩码敏感值
-            "trace": st.get("trace", [])
-            + [{"role": "tool", "content": json.dumps(state.mask_sensitive(resp), ensure_ascii=False)}],
+            "trace": st.get("trace", []) + [{"role": "tool", "content": untrusted}],
         }
 
     # ── ask_user：反问结束本轮（§4.4，禁止编默认值）──
@@ -335,6 +345,11 @@ def build_agent_graph(*, planner, registry: ToolRegistry, engine, checkpointer=N
             content = st.get("report") or ""
         else:
             content = st["decision"].get("content") or ""
+        # L5 输出过滤（Step 5.2）：最终回复出口——落库与查询报告前过滤 system prompt 内容、
+        # 完整 api_key、密钥类 setting 值（命中掩码/替换，正常回复原样放行）。
+        content = defense.sanitize_output(
+            content, secrets=defense.collect_sensitive_values(engine)
+        )
         report_step_id = _persist_step(engine, st["session_id"], state.StepKind.REPORT, llm_decision=st["decision"])
         _notify(state.StepKind.REPORT, step_id=report_step_id, llm_decision=st["decision"])
         _finalize_session(engine, st["session_id"], content)
