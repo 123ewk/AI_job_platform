@@ -34,6 +34,8 @@ from fastapi.responses import HTMLResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
+from agent.api import agent_router as _agent_api_router  # noqa: E402, I001  # Agent 对话 API（Step 2.4）
+
 from db.backend import (  # noqa: E402, I001  # 必须先于 boss_replier：其 import 时 sys.path.insert(interview) 会劫持 `db` 包
     add_application,
     add_message,
@@ -86,6 +88,9 @@ app.add_middleware(
 static_dir = Path(__file__).parent / "static"
 static_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir), html=False), name="static")
+
+# Agent 对话 API（Step 2.4）：POST /api/agent/chat + WebSocket /ws/agent
+app.include_router(_agent_api_router)
 
 # ── 全局状态 ──
 automation: Optional[BossAutomation] = None

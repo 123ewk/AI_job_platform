@@ -220,7 +220,7 @@ def _finalize_session(engine, session_id: int, report: str) -> None:
 # ══════════════════════════════════════════════════════════
 
 
-def build_agent_graph(*, planner, registry: ToolRegistry, engine, checkpointer=None):
+def build_agent_graph(*, planner, registry: ToolRegistry, engine, checkpointer=None, on_step=None):
     """构造并编译决策图。
 
     - `planner(messages, tool_schemas) -> decision`：LLM function-calling 决策接缝；
@@ -228,13 +228,30 @@ def build_agent_graph(*, planner, registry: ToolRegistry, engine, checkpointer=N
     - `engine`：SQLA 引擎，作 session/step/approval transcript 落库（§4.7）；
     - `checkpointer`：LangGraph 检查点（缺省 InMemorySaver；生产用
       `SqliteSaver`，实现窗口恢复 §4.1）。execution_mode 在 invoke 输入里按会话传入。
+    - `on_step(event) -> None`：可选回调，每完成一步（plan/execute/ask_user/report）
+      触发一次，event 含 kind/step_id/tool_name/tool_input/llm_decision——Step 2.4
+      对话 API 据此经 WebSocket 推送步骤进度（§3 对话入口）。缺省 None（2.3 行为不变）。
     """
+    def _notify(kind: str, *, step_id: int, tool_name=None, tool_input=None, llm_decision=None) -> None:
+        """每步完成回调：Step 2.4 WS 进度推送的使能点（缺省 on_step=None 为 no-op）。"""
+        if on_step is None:
+            return
+        event: dict = {"kind": kind, "step_id": step_id}
+        if tool_name is not None:
+            event["tool_name"] = tool_name
+        if tool_input is not None:
+            event["tool_input"] = tool_input
+        if llm_decision is not None:
+            event["llm_decision"] = llm_decision
+        on_step(event)
+
     # ── plan：LLM 决策 + 决策字面落库 ──
     def _plan(st: AgentState) -> dict:
         sid = _ensure_session(engine, st["thread_id"], st.get("user_input", ""), st.get("execution_mode", "audit"))
         trace = list(st.get("trace", []))
         decision = planner(messages=trace, tool_schemas=registry.schemas())
         step_id = _persist_step(engine, sid, state.StepKind.PLAN, llm_decision=decision)
+        _notify(state.StepKind.PLAN, step_id=step_id, llm_decision=decision)
         return {
             "session_id": sid,
             "decision": decision,
@@ -273,17 +290,19 @@ def build_agent_graph(*, planner, registry: ToolRegistry, engine, checkpointer=N
         if tool is None:
             raise KeyError(f"未注册的工具：{name}")
         out = tool.func(**args)
-        _persist_step(
+        step_id = _persist_step(
             engine, st["session_id"], state.StepKind.EXECUTE,
             tool_name=name, tool_input=args, tool_output=out,
         )
+        _notify(state.StepKind.EXECUTE, step_id=step_id, tool_name=name, tool_input=args, llm_decision=dec)
         resp = {"tool": name, "output": out}
         return {"tool_result": resp, "trace": st.get("trace", []) + [{"role": "tool", "content": json.dumps(resp, ensure_ascii=False)}]}
 
     # ── ask_user：反问结束本轮（§4.4，禁止编默认值）──
     def _ask_user(st: AgentState) -> dict:
         q = st["decision"].get("question", "")
-        _persist_step(engine, st["session_id"], state.StepKind.ASK_USER, llm_decision=st["decision"])
+        ask_step_id = _persist_step(engine, st["session_id"], state.StepKind.ASK_USER, llm_decision=st["decision"])
+        _notify(state.StepKind.ASK_USER, step_id=ask_step_id, llm_decision=st["decision"])
         return {"ask_user_question": q}
 
     # ── report：最终汇报 + session 收尾 ──
@@ -292,7 +311,8 @@ def build_agent_graph(*, planner, registry: ToolRegistry, engine, checkpointer=N
             content = st.get("report") or ""
         else:
             content = st["decision"].get("content") or ""
-        _persist_step(engine, st["session_id"], state.StepKind.REPORT, llm_decision=st["decision"])
+        report_step_id = _persist_step(engine, st["session_id"], state.StepKind.REPORT, llm_decision=st["decision"])
+        _notify(state.StepKind.REPORT, step_id=report_step_id, llm_decision=st["decision"])
         _finalize_session(engine, st["session_id"], content)
         return {"report": content}
 
