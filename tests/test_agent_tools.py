@@ -21,16 +21,28 @@
    的最严解释——敏感键唯一可写路径是人工 `/api/settings`）+ `write=True` 走审批门。
 8. **脱敏（§3.2/§4.3）**：`mask_sensitive` 对 `{key,value}` 命中敏感键的值、敏感键名值、
    独立手机号递归掩码；transcript（agent_steps 的 tool_input/llm_decision）不落原始密钥。
+9. **FlowLock（§3.3/§4.6）**：浏览器互斥锁（threading 底座，跨 asyncio.to_thread 工作线程
+   与事件循环线程）——带 owner 标签、阻塞获取排队、非阻塞 locked() 查询、幂等 release；
+   **验收测试：FlowLock 被占时 search_jobs 排队而非并发**（锁释放前绝不碰浏览器）。
+10. **search_jobs（§3.3/§4.2）**：读浏览器工具——调既有 `automation.search`（走 _run_pw
+    桥注入）、max_pages 翻页（≤3）、入库 `status=discovered`、按 URL 去重、被过滤的恢复
+    pending；L3 校验（缺 keyword / max_pages 越界 → error）；浏览器未启动 → error。
+11. **get_conversations_summary（§3.3/§4.2）**：本地镜像库会话概览（不碰浏览器）——
+    total/unread_total + 最近会话列表，last_message_text 手机号脱敏后才出工具。
 
 mock/隔离：所有用例用内存 SQLite + StaticPool（`asyncio.to_thread` 跨线程 invoke 需
 共享同一连接），插真实 `applications` / `settings` 行，工具走注入引擎、不碰真实库；
-审批中断测试用 SqliteSaver 临时文件 + `Command(resume=...)`（进程重启恢复模式）。
+审批中断测试用 SqliteSaver 临时文件 + `Command(resume=...)`（进程重启恢复模式）；
+浏览器工具注入假 automation + 直调 pw_runner（不启动 Playwright），FlowLock 用例
+用独立锁实例避免污染模块单例。
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import threading
+import time
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
@@ -38,8 +50,10 @@ from sqlalchemy import create_engine, func
 from sqlalchemy.pool import StaticPool
 
 from agent import service, state
+from agent.flow_lock import FlowLock, default_flow_lock
 from agent.graph import DEFAULT_RECURSION_LIMIT, build_agent_graph
 from agent.service import AgentService
+from agent.tools import get_conversations_summary_factory, search_jobs_factory
 from db import models
 
 # ══════════════════════════════════════════════════════════
@@ -480,3 +494,265 @@ def test_audit_update_setting_interrupt_then_approve_writes(tmp_path):
     with eng.connect() as conn:
         assert conn.exec_driver_sql("SELECT value FROM settings WHERE key='daily_apply_limit'").scalar() == "30"
         assert conn.exec_driver_sql("SELECT status FROM approvals").scalar() == state.ApprovalStatus.APPROVED
+
+
+# ══════════════════════════════════════════════════════════
+#  验收 10（Step 3.3）：FlowLock 互斥 + search_jobs / get_conversations_summary
+# ══════════════════════════════════════════════════════════
+
+
+def test_flowlock_semantics_blocking_queue_and_idempotent_release():
+    """FlowLock 基本语义：owner 标签 / 非阻塞抢锁失败 / 阻塞排队 / 幂等 release（§4.6）。"""
+    lock = FlowLock()
+    assert lock.locked() is False
+    assert lock.acquire("agent:search", blocking=False) is True
+    assert lock.locked() is True
+    assert lock.owner == "agent:search"
+    # 非阻塞：被占时立即失败，原有持有者不变
+    assert lock.acquire("monitor", blocking=False) is False
+    assert lock.owner == "agent:search"
+
+    # 阻塞获取排队：起线程验证，锁释放前不返回
+    acquired: dict = {}
+    t = threading.Thread(target=lambda: acquired.update(got=lock.acquire("queued", blocking=True)))
+    t.start()
+    time.sleep(0.1)
+    assert acquired == {}, "锁被占时阻塞获取应排队等待，而非立即返回"
+    lock.release()
+    t.join(timeout=5)
+    assert not t.is_alive()
+    assert acquired.get("got") is True
+    assert lock.owner == "queued"
+
+    lock.release()  # 释放 queued 的持有
+    lock.release()  # 幂等：未持有再释放为 no-op，不抛 RuntimeError
+    assert lock.locked() is False
+    # 单例供 boss_app monitor 循环与工具共享（§4.6），默认未占用
+    assert default_flow_lock.locked() is False
+
+
+def test_search_jobs_queues_when_flowlock_held():
+    """§3.3/§4.6 验收：FlowLock 被占时工具排队而非并发（锁释放前绝不执行浏览器搜索）。"""
+    eng = _engine()
+    lock = FlowLock()
+    lock.acquire("sync", blocking=False)  # 模拟监控循环正在占用浏览器
+
+    searches = []
+    search_started = threading.Event()
+    release_gate = threading.Event()
+
+    class _FakeAuto:
+        def search(self, keyword, city_code, **kw):
+            searches.append(keyword)
+            search_started.set()
+            release_gate.wait()  # 模拟搜索耗时，若被并发执行这里能观察到
+            return [{"title": "排队岗", "company": "甲公司", "url": "https://z.com/q1", "salary": "20-40K", "city": "上海"}]
+
+    search_jobs = search_jobs_factory(
+        eng,
+        lock=lock,
+        get_automation=lambda: _FakeAuto(),
+        pw_runner=lambda fn, *a, **k: fn(*a, **k),
+    )
+
+    out: dict = {}
+    t = threading.Thread(target=lambda: out.update(result=search_jobs(keyword="python")))
+    t.start()
+    time.sleep(0.15)  # 给排队线程一点启动时间
+    assert searches == [], "FlowLock 被占期间工具应排队等待，不得并发执行浏览器搜索"
+    assert search_started.is_set() is False
+
+    lock.release()  # 占用方释放 → 工具排到锁 → 继续执行搜索
+    release_gate.set()
+    t.join(timeout=5)
+    assert not t.is_alive()
+    assert searches == ["python"]
+    assert out["result"]["error"] is None
+    assert out["result"]["found"] == 1
+    assert out["result"]["added"] == 1
+    assert lock.locked() is False  # 工具结束已释放锁
+
+
+def test_search_jobs_persists_discovered_and_dedup_and_restore():
+    """search_jobs 入库 status=discovered；按 URL 去重；被过滤的旧岗恢复 pending（§4.2）。"""
+    eng = _engine()
+    # 存量：一条 filtered（搜索会再次搜到它 → 恢复 pending）
+    _insert_job(eng, title="旧岗位", status=state.JobStatus.FILTERED, city="北京")
+
+    def _search(keyword, city_code, **kw):
+        return [
+            {"title": "新岗位A", "company": "公司A", "url": "https://z.com/a", "salary": "10-20K", "city": "上海", "hr_active_days": 3},
+            {"title": "新岗位B", "company": "公司B", "url": "https://z.com/b", "salary": "20-40K", "city": "上海"},
+            {"title": "旧岗位", "company": "旧公司", "url": "https://zhaopin.example.com/旧岗位-filtered-北京", "salary": "5-10K", "city": "北京"},
+        ]
+
+    search_jobs = search_jobs_factory(
+        eng, get_automation=lambda: _FakeSearch(_search),
+        pw_runner=lambda fn, *a, **k: fn(*a, **k),
+    )
+
+    out = search_jobs(keyword="python")
+    assert out["error"] is None
+    assert out["added"] == 2
+    assert out["deduped"] == 1
+    assert out["restored_from_filtered"] == 1
+
+    with eng.connect() as conn:
+        rows = conn.exec_driver_sql("SELECT job_title, status FROM applications ORDER BY id").fetchall()
+    statuses = {r[0]: r[1] for r in rows}
+    assert statuses["新岗位A"] == state.JobStatus.DISCOVERED
+    assert statuses["新岗位B"] == state.JobStatus.DISCOVERED
+    assert statuses["旧岗位"] == state.JobStatus.PENDING  # filtered → 恢复库存
+
+
+class _FakeSearch:
+    """search() 返回给定列表的假浏览器（复用 _fake_browser 的翻页私有方法形状）。"""
+
+    def __init__(self, fn):
+        self.fn = fn
+        self.page = type("P", (), {"goto": staticmethod(lambda *a, **k: None)})()
+
+    def search(self, keyword, city_code, **kw):
+        return self.fn(keyword, city_code, **kw)
+
+    def _wait_for_jobs_loaded(self, **kw):
+        return 5
+
+    def _scroll_all(self):
+        pass
+
+    def _extract_job_cards(self):
+        return []
+
+
+def test_search_jobs_l3_validation_and_browser_not_started():
+    """search_jobs L3：缺 keyword / max_pages 越界 → error；浏览器未启动 → error。"""
+    eng = _engine()
+    search_jobs = search_jobs_factory(
+        eng, get_automation=lambda: None, pw_runner=lambda fn, *a, **k: fn(*a, **k)
+    )
+
+    assert search_jobs()["error"] == "参数校验失败"  # 缺 keyword
+    assert search_jobs(keyword="python", max_pages=0)["error"] == "参数校验失败"
+    assert search_jobs(keyword="python", max_pages=4)["error"] == "参数校验失败"
+    out = search_jobs(keyword="python")
+    assert out["error"] == "浏览器未启动"
+
+
+def test_search_jobs_max_pages_navigates_additional_pages():
+    """max_pages≤3：第 1 页走 automation.search，后续页 goto page=N URL（§4.2）。"""
+    eng = _engine()
+    calls = []
+
+    class _FakePage:
+        def goto(self, url, **kw):
+            calls.append(("goto", url))
+
+    class _FakeAuto:
+        def __init__(self):
+            self.page = _FakePage()
+
+        def search(self, keyword, city_code, **kw):
+            calls.append(("search", keyword))
+            return [{"title": "P1", "company": "A", "url": "https://z.com/p1", "salary": "5-10K", "city": "上海"}]
+
+        def _wait_for_jobs_loaded(self, **kw):
+            return 5
+
+        def _scroll_all(self):
+            pass
+
+        def _extract_job_cards(self):
+            return [{"title": "P2", "company": "B", "url": "https://z.com/p2", "salary": "8-15K", "city": "上海"}]
+
+    search_jobs = search_jobs_factory(
+        eng, get_automation=lambda: _FakeAuto(), pw_runner=lambda fn, *a, **k: fn(*a, **k)
+    )
+    out = search_jobs(keyword="python", max_pages=2)
+    assert out["error"] is None
+    assert out["added"] == 2
+    assert calls[0] == ("search", "python")
+    assert calls[1][0] == "goto"
+    assert "page=2" in calls[1][1]
+
+
+def test_get_conversations_summary_reads_mirror_db_masked():
+    """get_conversations_summary：本地镜像库概览，手机号脱敏后才出工具（§4.2/§4.3）。"""
+    eng = _engine()
+    with eng.begin() as conn:
+        conn.execute(
+            models.Conversation.__table__.insert().values(
+                hr_name="张伟", hr_company="甲公司", job_title="后端工程师",
+                last_message_text="联系我 13800138000", last_message_from="hr",
+                unread_count=2, online_status="在线",
+            )
+        )
+        conn.execute(
+            models.Conversation.__table__.insert().values(
+                hr_name="李娜", hr_company="乙公司", job_title="前端工程师",
+                last_message_text="明天面试", last_message_from="hr",
+                unread_count=0, online_status="离线",
+            )
+        )
+
+    summary = get_conversations_summary_factory(eng)
+    out = summary()
+    assert out["error"] is None
+    assert out["total"] == 2
+    assert out["unread_total"] == 1
+    assert len(out["conversations"]) == 2
+
+    texts = [c["last_message_text"] for c in out["conversations"]]
+    assert any("13800138000" in (t or "") for t in texts) is False  # 原手机号不出工具
+    assert any("138****8000" in (t or "") for t in texts)            # 掩码后格式
+
+    out2 = summary(only_unread=True)
+    assert out2["total"] == 1
+    assert out2["conversations"][0]["hr_name"] == "张伟"
+
+    out3 = summary(hr_name="李娜")
+    assert out3["total"] == 1
+    assert out3["conversations"][0]["hr_name"] == "李娜"
+
+    out4 = summary(limit=51)
+    assert out4["error"] == "参数校验失败"
+
+
+def test_default_registry_includes_browser_tools():
+    """default_registry 含 search_jobs / get_conversations_summary，write=False（§4.2 读浏览器分类）。"""
+    eng = _engine()
+    reg = service.default_registry(eng)
+    for name in ("search_jobs", "get_conversations_summary"):
+        tool = reg.get(name)
+        assert tool is not None, f"{name} 应在默认注册表"
+        assert tool.write is False, f"{name} 是读工具，audit 直放不留审批"
+
+
+def test_agent_chat_search_jobs_end_to_end():
+    """AgentService 全链路：planner 调 search_jobs → 入库 discovered → 汇报（autonomous 直放）。"""
+    eng = _engine()
+
+    def _planner(messages, tool_schemas):
+        if any(m.get("role") == "tool" for m in messages):
+            return {"action": "report", "content": "已搜新岗位"}
+        return {"action": "tool", "name": "search_jobs", "arguments": {"keyword": "python"}}
+
+    def _search(keyword, city_code, **kw):
+        return [{"title": "AI工程师", "company": "甲公司", "url": "https://z.com/x1", "salary": "20-40K", "city": "上海"}]
+
+    reg = service.default_registry(
+        eng,
+        get_automation=lambda: _FakeSearch(_search),
+        pw_runner=lambda fn, *a, **k: fn(*a, **k),
+    )
+    svc = AgentService(engine=eng, make_planner=lambda ui: _planner, registry=reg)
+
+    async def _chat():
+        return await svc.chat("帮我搜一下python岗位", "t-search", "autonomous")
+
+    result = asyncio.run(_chat())
+    assert result["report"] == "已搜新岗位"
+    assert result["status"] == "completed"
+    with eng.connect() as conn:
+        statuses = [r[0] for r in conn.exec_driver_sql("SELECT status FROM applications")]
+        assert statuses == [state.JobStatus.DISCOVERED]

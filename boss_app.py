@@ -35,6 +35,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 from agent.api import agent_router as _agent_api_router  # noqa: E402, I001  # Agent 对话 API（Step 2.4）
+from agent.flow_lock import default_flow_lock as flow_lock  # noqa: E402, I001  # §4.6 浏览器互斥锁（Step 3.3）
 
 from db.backend import (  # noqa: E402, I001  # 必须先于 boss_replier：其 import 时 sys.path.insert(interview) 会劫持 `db` 包
     add_application,
@@ -2536,7 +2537,9 @@ async def chat_monitor_loop():
             delay = random.randint(min(min_delay, max_delay), max(min_delay, max_delay) + 5)
             await asyncio.sleep(delay)
 
-            if monitor_paused:
+            # §4.6 FlowLock：Agent 浏览器类工具（search_jobs 等）持有期间跳过本轮，
+            # 不与 Agent 抢浏览器；monitor_paused 为用户暂停标志，行为不变（等价替换+新增互斥）。
+            if monitor_paused or flow_lock.locked():
                 continue
 
             if not automation:

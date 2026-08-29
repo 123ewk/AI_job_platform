@@ -1,4 +1,4 @@
-"""agent/tools.py — Agent 工具（SDD Step 3.1 只读 / 3.2 写配置，§4.2 工具清单）。
+"""agent/tools.py — Agent 工具（SDD Step 3.1 只读 / 3.2 写配置 / 3.3 浏览器+会话概览，§4.2 工具清单）。
 
 实现真工具（相对 2.4 的 echo 假工具）：
 - `query_jobs`：只读 DB 查岗位库，`status` 精确过滤 + `ungreeted=true` 专用过滤
@@ -7,6 +7,10 @@
 - `update_setting`：写 settings 配置（write=True 走审批门）。白名单
   `state.SETTINGS_WHITELIST`（== 手动设置 API 字段集）；敏感键 `state.SENSITIVE_SETTING_KEYS`
   全模式硬拒（唯一可写路径是人工 /api/settings）；值经 `state.mask_sensitive` 脱敏。
+- `search_jobs`：**读浏览器**搜新岗位（§4.2 分类 write=False）——调既有 `BossScraper.search`
+  走 `_run_pw` 单线程池，`max_pages≤3` 翻页；入库 `status=discovered`、按 URL 去重、
+  被过滤的恢复 pending；浏览器互斥走 `FlowLock`（§4.6），**锁被占时排队等待而非报错**。
+- `get_conversations_summary`：本地镜像库会话概览（用户问"有没有 HR 回我"，不碰浏览器）。
 
 设计要点：
 - **status 机映射**：`agent.state.JobStatus` 是 Agent 岗位状态机单一真源，值直接写/读
@@ -17,8 +21,13 @@
   回灌 plan，LLM 据此自纠（禁止 Agent 编默认值，§4.4）。
 - **敏感键硬拒**：update_setting 对 ai_api_key/wechat_id 无条件拒绝（实现时定的最严解释），
   日志只记掩码值，返回结果也不回显原始值。
+- **FlowLock 互斥（§4.6）**：search_jobs 执行期间持有浏览器互斥锁，`chat_monitor_loop`
+  每轮非阻塞查询被占则跳过；锁被占时工具阻塞 `acquire(owner, blocking=True)` 排队。
 - **引擎注入**：工具以 factory 闭包绑定注入的 SQLA 引擎（测试用内存库、运行时真实库），
   `_execute_tool` 调 `func(**args)` 时 LLM 参数与 engine 无键冲突。
+- **浏览器桥可注入**：search_jobs 的 `get_automation` / `pw_runner` / `lock` 均可注入
+  （测试用假浏览器 + 直调桥，不启动 Playwright）；缺省懒加载 `boss_app`（避免循环导入，
+  运行时 boss_app 已完整导入）。
 """
 
 from __future__ import annotations
@@ -32,6 +41,7 @@ from sqlalchemy import func, select, text, update
 from sqlalchemy.orm import Session as SASession
 
 from agent import state
+from agent.flow_lock import FlowLock, default_flow_lock
 from agent.graph import ToolRegistry
 from db import models
 from interview.llm_client import build_tool_schema
@@ -70,6 +80,22 @@ class UpdateSettingParams(BaseModel):
         description="settings 配置键（白名单内；敏感键 ai_api_key/wechat_id 一律拒绝，需人工在 /api/settings 修改）",
     )
     value: str = Field("", description="新值（字符串；清空传空串）")
+
+
+class SearchJobsParams(BaseModel):
+    """search_jobs 入参（§4.2：读浏览器，调既有 BossScraper.search，入库 status=discovered）。"""
+
+    keyword: str = Field(..., description="搜索关键词")
+    city: str | None = Field(None, description="城市名（缺省取 settings default_city，再缺省'全国'）")
+    max_pages: int = Field(1, ge=1, le=3, description="搜索页数上限（1-3）")
+
+
+class ConversationsSummaryParams(BaseModel):
+    """get_conversations_summary 入参（§4.2：本地镜像库会话概览，不碰浏览器）。"""
+
+    limit: int = Field(10, ge=1, le=50, description="返回会话条数上限（1-50）")
+    only_unread: bool | None = Field(None, description="只统计有未读的会话（可选）")
+    hr_name: str | None = Field(None, description="按 HR 姓名精确过滤（可选）")
 
 
 # ══════════════════════════════════════════════════════════
@@ -246,6 +272,254 @@ def update_setting_factory(engine) -> Callable[..., dict]:
 
 
 # ══════════════════════════════════════════════════════════
+#  浏览器互斥 + 搜索 / 会话概览（Step 3.3，§4.2/§4.6）
+# ══════════════════════════════════════════════════════════
+
+
+def _get_setting_value(engine, key: str, default: str) -> str:
+    with SASession(engine) as s:
+        row = s.get(models.Setting, key)
+    return row.value if row is not None and row.value else default
+
+
+def _normalize_url(url: str) -> str:
+    """规范化 BOSS 岗位 URL（懒加载 boss_app._normalize_job_url，避免循环导入）。"""
+    from boss_app import _normalize_job_url  # noqa: PLC0415 运行时 boss_app 已完整导入
+
+    return _normalize_job_url(url)
+
+
+def _int_or_neg(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return -1
+
+
+def _default_pw_runner(fn, *args, **kwargs) -> Any:
+    """工具线程里跑 `_run_pw` 的默认桥：懒加载 boss_app，`asyncio.run` 起临时循环。
+
+    search_jobs 在 `asyncio.to_thread` 工作线程执行（无运行中事件循环），故在工具线程
+    里 `asyncio.run(_run_pw(...))` 起一个临时循环，把同步浏览器操作提交到 boss_app 的
+    pw 单线程池串行执行——与既有端点完全同一条执行路径，只是等待方换了个临时循环。
+    """
+    import asyncio
+
+    from boss_app import _run_pw  # noqa: PLC0415
+
+    return asyncio.run(_run_pw(fn, *args, **kwargs))
+
+
+def _default_get_automation() -> Any:
+    from boss_app import automation  # noqa: PLC0415
+
+    return automation
+
+
+def _search_page_n(automation, keyword: str, city_code: str, page: int) -> list[dict]:
+    """翻到搜索第 N 页并提取岗位卡片（整段在 pw 线程里执行）。
+
+    第 1 页走既有 `automation.search`（§4.2"调既有 BossScraper.search"）；后续页
+    BOSS 分页 URL（`page=N`）+ 复用既有 `_wait_for_jobs_loaded`/`_scroll_all`/
+    `_extract_job_cards`（boss_firefox.py 一行不动，仅复用其方法）。
+    """
+    from urllib.parse import urlencode
+
+    url = "https://www.zhipin.com/web/geek/job?" + urlencode(
+        {"query": keyword, "city": city_code, "page": page}
+    )
+    automation.page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    automation._wait_for_jobs_loaded(min_count=5, max_wait_s=10)
+    automation._scroll_all()
+    return automation._extract_job_cards()
+
+
+def _search_pages(runner: Callable[..., Any], automation, keyword: str, city_code: str, max_pages: int) -> list[dict]:
+    """逐页搜岗位：第 1 页走 automation.search，2..max_pages 走翻页 URL。"""
+    jobs: list[dict] = []
+    for page in range(1, max_pages + 1):
+        if page == 1:
+            page_jobs = runner(automation.search, keyword, city_code) or []
+        else:
+            page_jobs = runner(_search_page_n, automation, keyword, city_code, page) or []
+        if page_jobs:
+            jobs.extend(page_jobs)
+    return jobs
+
+
+def _persist_discovered(engine, jobs: list[dict]) -> tuple[int, int, int]:
+    """去重 + 入库：新岗位 status='discovered'，已存在按 URL 去重，被过滤的恢复 pending。
+
+    §4.2 返回"新增 N 条 / 去重 M 条"。去重口径与存量 `/api/jobs/search` 一致
+    （job_url 唯一）；不套用 boss_app 的关键词黑名单/HR 活跃度过滤——那是打招呼流程
+    消费端的过滤，Phase 4.2 send_greetings 沿用既有逻辑。
+    """
+    added = 0
+    deduped = 0
+    restored = 0
+    with SASession(engine) as s:
+        for j in jobs:
+            url = _normalize_url(j.get("url") or "")
+            if not url:
+                continue
+            existing = s.execute(
+                select(models.Application).where(models.Application.job_url == url)
+            ).scalar_one_or_none()
+            if existing is not None:
+                deduped += 1
+                if existing.status == state.JobStatus.FILTERED:
+                    # 之前被关键词过滤、现重新搜到 → 恢复为可打招呼库存（与既有搜索口径一致）
+                    existing.status = state.JobStatus.PENDING
+                    restored += 1
+                continue
+            s.add(
+                models.Application(
+                    job_title=j.get("title") or "",
+                    company=j.get("company"),
+                    salary=j.get("salary"),
+                    job_url=url,
+                    city=j.get("city"),
+                    experience=j.get("experience"),
+                    education=j.get("education"),
+                    hr_name=j.get("hr_name"),
+                    hr_title=j.get("hr_title"),
+                    description=j.get("description"),
+                    company_id=j.get("company_id"),
+                    brand_name=j.get("brand_name"),
+                    hr_active_label=j.get("hr_active_label"),
+                    hr_active_days=_int_or_neg(j.get("hr_active_days")),
+                    status=state.JobStatus.DISCOVERED,
+                )
+            )
+            added += 1
+        s.commit()
+    return added, deduped, restored
+
+
+def search_jobs_factory(
+    engine,
+    *,
+    lock: FlowLock | None = None,
+    get_automation: Callable[[], Any] | None = None,
+    pw_runner: Callable[..., Any] | None = None,
+) -> Callable[..., dict]:
+    """构造 `search_jobs(**kwargs) -> dict`：读浏览器搜岗位 + 入库 status=discovered。
+
+    §4.2：调既有 `BossScraper.search`（走 `_run_pw` 单线程池），新增入库 discovered、
+    已存在按 URL 去重、此前被过滤的恢复 pending。浏览器互斥用 FlowLock（§4.6）——
+    **锁被占时阻塞排队等待而非报错**（Step 3.3 验收测试焦点）。
+
+    - `lock`：浏览器互斥锁（缺省模块单例 `default_flow_lock`；测试注入独立锁）
+    - `get_automation()`：取浏览器对象（缺省懒加载 `boss_app.automation`；None=未启动）
+    - `pw_runner(fn, *args) -> result`：把同步浏览器操作桥到 pw 单线程池
+      （缺省 `_default_pw_runner`；测试注入同步直调）
+    """
+    flow = lock if lock is not None else default_flow_lock
+    loader = get_automation or _default_get_automation
+    runner = pw_runner or _default_pw_runner
+
+    def search_jobs(**kwargs: Any) -> dict:
+        try:
+            p = SearchJobsParams(**kwargs)
+        except ValidationError as e:
+            return {"error": "参数校验失败", "message": str(e)}
+
+        # §4.6：浏览器互斥——阻塞排队等待（不报错、不并发抢浏览器），拿到锁才动浏览器
+        if not flow.acquire(f"agent:search_jobs:{p.keyword}", blocking=True):
+            return {"error": "浏览器忙", "message": "浏览器互斥锁被占用（排队超时）"}
+        try:
+            automation = loader()
+            if automation is None:
+                return {"error": "浏览器未启动", "message": "请先在设置页启动浏览器（扫码登录）"}
+
+            from boss_app import CITY_MAP  # noqa: PLC0415
+
+            city = p.city or _get_setting_value(engine, "default_city", "全国")
+            city_code = CITY_MAP.get(city, "100010000")
+            jobs = _search_pages(runner, automation, p.keyword, city_code, p.max_pages)
+            added, deduped, restored = _persist_discovered(engine, jobs)
+            return {
+                "error": None,
+                "keyword": p.keyword,
+                "city": city,
+                "pages": p.max_pages,
+                "found": len(jobs),
+                "added": added,
+                "deduped": deduped,
+                "restored_from_filtered": restored,
+            }
+        finally:
+            flow.release()
+
+    return search_jobs
+
+
+def get_conversations_summary_factory(engine) -> Callable[..., dict]:
+    """构造 `get_conversations_summary(**kwargs) -> dict`：本地镜像库会话概览（§4.2）。
+
+    用户问"有没有 HR 回我"：不碰浏览器，从 conversations/messages 镜像库回答。
+    `last_message_text` 出工具前经 `state.mask_sensitive` 脱敏（手机号/token 掩码）；
+    不输出 hr_wechat 字段（Agent 不需要，杜绝泄露面）。
+    """
+
+    def get_conversations_summary(**kwargs: Any) -> dict:
+        try:
+            p = ConversationsSummaryParams(**kwargs)
+        except ValidationError as e:
+            return {"error": "参数校验失败", "message": str(e)}
+
+        filters = []
+        if p.only_unread:
+            filters.append(models.Conversation.unread_count > 0)
+        if p.hr_name:
+            filters.append(models.Conversation.hr_name == p.hr_name)
+
+        with SASession(engine) as s:
+            total = s.execute(
+                select(func.count()).select_from(models.Conversation).where(*filters)
+            ).scalar_one()
+            unread_total = s.execute(
+                select(func.count()).select_from(models.Conversation).where(
+                    models.Conversation.unread_count > 0, *filters
+                )
+            ).scalar_one()
+            rows = (
+                s.execute(
+                    select(models.Conversation)
+                    .where(*filters)
+                    .order_by(models.Conversation.updated_at.desc())
+                    .limit(p.limit)
+                )
+                .scalars()
+                .all()
+            )
+
+        conversations = [
+            {
+                "id": c.id,
+                "hr_name": c.hr_name,
+                "hr_company": c.hr_company,
+                "job_title": c.job_title,
+                "last_message_from": c.last_message_from,
+                "last_message_at": c.last_message_at.isoformat() if c.last_message_at else None,
+                "last_message_text": state.mask_sensitive(c.last_message_text) if c.last_message_text else None,
+                "unread_count": c.unread_count,
+                "online_status": c.online_status,
+            }
+            for c in rows
+        ]
+        return {
+            "error": None,
+            "total": total,
+            "unread_total": unread_total,
+            "count": len(conversations),
+            "conversations": conversations,
+        }
+
+    return get_conversations_summary
+
+
+# ══════════════════════════════════════════════════════════
 #  只读工具注册表
 # ══════════════════════════════════════════════════════════
 
@@ -286,13 +560,54 @@ def build_write_tools(engine, registry: ToolRegistry | None = None) -> ToolRegis
     return reg
 
 
+def build_browser_tools(
+    engine,
+    registry: ToolRegistry | None = None,
+    *,
+    lock: FlowLock | None = None,
+    get_automation: Callable[[], Any] | None = None,
+    pw_runner: Callable[..., Any] | None = None,
+) -> ToolRegistry:
+    """注册 search_jobs + get_conversations_summary 到 registry（缺省新建）。
+
+    - `search_jobs` 是"读浏览器"工具（§4.2 分类）→ write=False，audit 直放；持有
+      FlowLock 互斥（§4.6），锁被占时排队而非并发。
+    - `get_conversations_summary` 纯本地镜像库只读，不碰浏览器、不拿锁。
+    `lock/get_automation/pw_runner` 透传给 search_jobs_factory（测试注入）。
+    """
+    reg = registry or ToolRegistry()
+    reg.register(
+        "search_jobs",
+        func=search_jobs_factory(engine, lock=lock, get_automation=get_automation, pw_runner=pw_runner),
+        description=(
+            "搜新岗位（读浏览器，入库 status=discovered）。浏览器被其他流程占用时排队等待（FlowLock 互斥），"
+            "不并发抢占"
+        ),
+        schema=build_tool_schema("search_jobs", "搜新岗位（读浏览器）", SearchJobsParams),
+        write=False,
+    )
+    reg.register(
+        "get_conversations_summary",
+        func=get_conversations_summary_factory(engine),
+        description="查本地镜像库会话概览（只读，不碰浏览器）。回答'有没有 HR 回我'",
+        schema=build_tool_schema("get_conversations_summary", "查会话概览（只读）", ConversationsSummaryParams),
+        write=False,
+    )
+    return reg
+
+
 __all__ = [
     "QueryJobsParams",
     "GetProgressParams",
     "UpdateSettingParams",
+    "SearchJobsParams",
+    "ConversationsSummaryParams",
     "query_jobs_factory",
     "get_progress_factory",
     "update_setting_factory",
+    "search_jobs_factory",
+    "get_conversations_summary_factory",
     "build_read_tools",
     "build_write_tools",
+    "build_browser_tools",
 ]
