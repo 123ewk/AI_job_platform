@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session as SASession
 
 from agent import state
 from agent.graph import DEFAULT_RECURSION_LIMIT, ToolRegistry, build_agent_graph
+from agent.planner import default_planner_factory
 from db import base as db_base
 from db import models
 
@@ -211,7 +212,9 @@ class AgentService:
     async def _invoke(self, *, thread_id, user_input, execution_mode, resume: str | None = None, on_step=None):
         engine = self.engine or db_base.get_engine()
         registry = self.registry or default_registry(engine)
-        planner = (self.make_planner or echo_planner_factory)(user_input)
+        # Step 6.2 缺省链：有 AI key 用真 LLM planner（agent/planner.py），无 key 回退 echo；
+        # make_planner 显式注入优先（测试/定制零影响）。
+        planner = (self.make_planner or default_planner_factory)(user_input)
         config = {"thread_id": thread_id, "recursion_limit": DEFAULT_RECURSION_LIMIT}
 
         if resume is None:

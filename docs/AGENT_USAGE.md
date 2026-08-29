@@ -78,9 +78,11 @@ curl -s http://127.0.0.1:8010/api/agent/chat \
 }
 ```
 
-> 生产 Planner：`AgentService.make_planner` 缺省用骨架 `echo_planner_factory`（无需 AI key）。
-> 接入真实 LLM 时把 `llm_chat_functions`（`interview/llm_client.py`，OpenAI 兼容 function-calling）
-> 包成 `planner(messages, tool_schemas)` 注入即可，路由与服务零改动。
+> 生产 Planner（Step 6.2 起）：`AgentService` 缺省链为「有 AI key（env `AI_API_KEY` 优先、
+> settings 表 `ai_api_key` 兜底）用真 LLM planner（`agent/planner.py`，包 `llm_chat_functions`
+> function-calling，system prompt = 安全常量 + 工作规则；DeepSeek 端点自动关闭思考模式），
+> 无 key 回退 `echo_planner_factory` 保冒烟」。自定义时把任意 OpenAI 兼容模型包成
+> `planner(messages, tool_schemas)` 经 `make_planner` 注入即可，路由与服务零改动。
 
 ---
 

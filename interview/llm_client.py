@@ -163,6 +163,7 @@ def llm_chat_functions(
     system_prompt: Optional[str] = None,
     temperature: float = 0.3,
     tool_choice: str = "auto",
+    extra_body: Optional[dict] = None,
 ) -> dict:
     """调用 AI API 做 function-calling（OpenAI 兼容 `tools` 格式，DeepSeek 支持）。
 
@@ -172,6 +173,10 @@ def llm_chat_functions(
     返回 assistant message dict（OpenAI 结构原样）：
         {"role": "assistant", "content": str|None, "tool_calls": [...]|None}
     调用方解析 `tool_calls[].function`（name + arguments JSON）走 ToolRegistry。
+
+    `extra_body`：供应商扩展字段的逃生口（None=不发，行为不变），合并进请求体
+    （同名字段以其为准）。DeepSeek 思考模式（deepseek-v4-pro 等）要求多轮回传
+    `reasoning_content`，Agent 决策循环用 `{"thinking": {"type": "disabled"}}` 关闭。
     """
     cfg = _load_ai_config()
     if not cfg["api_key"]:
@@ -188,6 +193,8 @@ def llm_chat_functions(
         "tools": tools,
         "tool_choice": tool_choice,
     }
+    if extra_body:
+        payload.update(extra_body)
 
     resp = httpx.post(
         f"{cfg['base_url']}/chat/completions",

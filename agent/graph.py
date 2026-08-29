@@ -311,8 +311,12 @@ def build_agent_graph(*, planner, registry: ToolRegistry, engine, checkpointer=N
         args = dec.get("arguments", {})
         tool = registry.get(name)
         if tool is None:
-            raise KeyError(f"未注册的工具：{name}")
-        out = tool.func(**args)
+            # Step 6.2：真 LLM 可能幻觉出未注册工具名——error dict 回灌自纠（§3.1 先例，
+            # 与工具 Pydantic 校验失败同模式），不再抛 KeyError 炸整个回合；allowed 带
+            # 白名单供 LLM 修正后重试。
+            out: dict = {"error": f"未注册的工具：{name}", "allowed": registry.names()}
+        else:
+            out = tool.func(**args)
         step_id = _persist_step(
             engine, st["session_id"], state.StepKind.EXECUTE,
             tool_name=name, tool_input=args, tool_output=out,
