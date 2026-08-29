@@ -7,70 +7,70 @@ BOSS直聘自动化控制台 —— FastAPI 后端
 
 import argparse
 import asyncio
+
+# ── 给所有 print 输出加时间戳 ──
+import builtins
 import json
 import random
 import re
 import sys
-import time
-from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
-from typing import Optional, List
-from urllib.parse import urljoin, quote_plus
+from typing import List, Optional
+from urllib.parse import quote_plus, urljoin
 
-# ── 给所有 print 输出加时间戳 ──
-import builtins
 _original_print = builtins.print
 def _ts_print(*args, **kwargs):
     ts = datetime.now().strftime('%H:%M:%S')
     _original_print(f"[{ts}]", *args, **kwargs)
 builtins.print = _ts_print
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+# 下方 db.backend import 必须置于 boss_replier 之前——boss_replier 导入时
+# sys.path.insert(interview) 会劫持顶层 `db` 包；待 Step 1.3 Commit4 归位 boss_replier 后恢复字典序。
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect  # noqa: E402, I001
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import HTMLResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
 
-from boss_automation import BossAutomation
-from boss_state import (
+from db.backend import (  # noqa: E402, I001  # 必须先于 boss_replier：其 import 时 sys.path.insert(interview) 会劫持 `db` 包
     add_application,
-    get_application,
-    get_application_by_url,
-    update_application_from_job,
-    list_applications,
-    update_application_status,
-    get_today_application_count,
-    get_or_create_conversation,
-    get_conversation,
-    list_active_conversations,
     add_message,
-    get_messages,
-    replace_conversation_messages,
-    update_conversation_last_message,
-    update_conversation_status,
-    set_auto_reply,
-    get_setting,
-    set_setting,
-    get_all_settings,
-    get_daily_stats,
-    get_wechat_exchanges,
-    get_today_pending_count,
-    count_hours_replied_in_range,
-    count_interest_level,
-    count_filtered_applications,
+    add_to_shortlist,
     clear_all_applications,
     clear_all_conversations,
-    get_total_application_count,
     count_applied_applications,
+    count_filtered_applications,
+    count_hours_replied_in_range,
+    count_interest_level,
+    get_all_settings,
+    get_application,
+    get_application_by_url,
+    get_conversation,
     get_daily_limit,
-    list_applications,
-    add_to_shortlist,
-    remove_from_shortlist,
-    list_shortlists,
+    get_daily_stats,
+    get_messages,
+    get_setting,
+    get_today_application_count,
+    get_today_pending_count,
+    get_total_application_count,
+    get_wechat_exchanges,
     is_in_shortlist,
+    list_active_conversations,
+    list_applications,
+    list_shortlists,
+    remove_from_shortlist,
+    replace_conversation_messages,
+    set_auto_reply,
+    set_setting,
+    update_application_from_job,
+    update_application_status,
+    update_conversation_last_message,
+    update_conversation_status,
 )
-from boss_replier import generate_greeting
+from boss_automation import BossAutomation  # noqa: E402
+from boss_replier import generate_greeting  # noqa: E402
 
 # ── FastAPI 应用 ──
 app = FastAPI(title="BOSS直聘自动化控制台", version="1.0.0")
@@ -101,7 +101,7 @@ async def on_startup():
     browser_sync_lock = asyncio.Lock()
     # 清理旧垃圾会话 + 合并同名重复会话
     try:
-        from boss_state import get_db
+        from db.backend import get_db
 
         db = get_db()
         junk_names = [
@@ -266,8 +266,6 @@ CITY_MAP = {
     "景德镇": "101240800", "萍乡": "101240900", "九江": "101240200", "新余": "101241000",
     "鹰潭": "101241100", "赣州": "101240700", "吉安": "101240600", "宜春": "101240500",
     "抚州": "101240400", "上饶": "101240300",
-    # 补充
-    "无锡": "101190200", "温州": "101210700", "绵阳": "101270400",
 }
 
 # 区县筛选（BOSS直聘 areaBusiness 参数）
@@ -1171,7 +1169,6 @@ def get_stats():
 @app.get("/api/doctor")
 def doctor():
     """诊断环境：Python版本、浏览器状态、登录态、AI配置等。"""
-    import os
     import sys as _sys
 
     try:
@@ -1488,7 +1485,7 @@ async def search_jobs(req: SearchRequest):
         max_inactive = req.max_hr_inactive_days or int(get_setting("max_hr_inactive_days", "7"))
 
         if dedup or filter_inactive:
-            from boss_state import has_company_been_applied
+            from db.backend import has_company_been_applied
             filtered = []
             skipped_company = 0
             skipped_inactive = 0
@@ -1806,7 +1803,8 @@ async def analyze_jd(req: AnalyzeRequest):
 async def optimize_resume(req: OptimizeResumeRequest):
     """根据岗位JD生成简历优化建议（24h DB 缓存）。"""
     import datetime
-    from boss_state import get_db
+
+    from db.backend import get_db
 
     resume = get_setting("resume_summary", "")
     desc = req.description or ""
@@ -1898,7 +1896,8 @@ async def optimize_resume(req: OptimizeResumeRequest):
 async def chat_suggestion(req: ChatSuggestionRequest):
     """根据岗位JD + HR信息生成沟通建议（24h DB 缓存）。"""
     import datetime
-    from boss_state import get_db
+
+    from db.backend import get_db
 
     desc = req.description or ""
     title = req.job_title or ""
@@ -2119,7 +2118,7 @@ async def sync_conversation_messages(conv_id: int):
                 replace_conversation_messages(conv_id, live_messages)
                 # 更新在线状态和公司信息
                 try:
-                    from boss_state import get_db
+                    from db.backend import get_db
                     db = get_db()
                     updates = []
                     params = []
@@ -2317,7 +2316,7 @@ class CompanyCheckRequest(BaseModel):
 @app.post("/api/company/info")
 async def fetch_company_info(req: CompanyInfoRequest):
     """抓取公司信息. 优先读 24h 缓存, 缓存 miss 或强制刷新时调浏览器抓 BOSS /gongsi/<id>.html."""
-    from boss_state import get_cached_company, save_company_cache
+    from db.backend import get_cached_company, save_company_cache
 
     if not req.company and not req.company_id:
         raise HTTPException(status_code=400, detail="company 或 company_id 必填一项")
@@ -2359,11 +2358,7 @@ async def _scrape_company_page(company: str, company_id: str = ""):
     """BOSS 公司详情页抓取, 简化版, 单页能拿的字段都拿."""
     if not automation or automation.page is None:
         return None
-    try:
-        from boss_firefox import BossScraper
-        scraper = BossAutomation.__mro__[1] if hasattr(BossAutomation, "__mro__") else BossScraper
-    except Exception:
-        scraper = None
+    from boss_firefox import pause  # 随机延迟：防风控，见 boss_automation 同源用法
 
     if not company_id:
         # 简化: 没 company_id 就走 BOSS 搜索, 拿第一条匹配公司的链接
@@ -2429,7 +2424,7 @@ async def _scrape_company_page(company: str, company_id: str = ""):
 @app.get("/api/company/cache/{name}")
 async def company_cache_lookup(name: str, company_id: str = ""):
     """只查缓存, 不抓 BOSS."""
-    from boss_state import get_cached_company
+    from db.backend import get_cached_company
     cached = get_cached_company(name, company_id)
     if not cached:
         raise HTTPException(status_code=404, detail="缓存不存在")
@@ -2439,7 +2434,7 @@ async def company_cache_lookup(name: str, company_id: str = ""):
 @app.post("/api/company/check-applied")
 async def check_company_applied(req: CompanyCheckRequest):
     """检查某公司是否已投递过."""
-    from boss_state import has_company_been_applied
+    from db.backend import has_company_been_applied
     if not req.company and not req.company_id:
         raise HTTPException(status_code=400, detail="company 或 company_id 必填一项")
     return has_company_been_applied(req.company, req.company_id or "")
@@ -2448,7 +2443,7 @@ async def check_company_applied(req: CompanyCheckRequest):
 @app.get("/api/companies/applied")
 async def companies_applied_list(limit: int = 200):
     """列出所有已发过的公司."""
-    from boss_state import list_applied_companies
+    from db.backend import list_applied_companies
     return {"companies": list_applied_companies(limit)}
 
 
