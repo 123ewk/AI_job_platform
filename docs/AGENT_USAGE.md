@@ -34,6 +34,10 @@
 planner（可接任意 OpenAI 兼容 function-calling 模型，如 DeepSeek），"手"是注册表
 `ToolRegistry` 里的白名单工具，所有动作都在你**已有的**浏览器与 SQLite 数据上执行。
 
+> UI 入口（SDD Step 6.3）：dashboard（`/`）侧边栏「🤖 Agent 对话」面板——对话气泡、
+> 执行模式下拉、审批批准/拒绝卡片、WS 步骤时间线、后台任务进度卡与停止按钮，
+> 消费的就是下文的 HTTP API 与 WS 事件，无新增端点。
+
 - 决策环：`plan → (approval_gate) → execute_tool → 回环 plan → report / ask_user`（LangGraph）。
 - 审计模式默认：**写操作**（改配置、打招呼）一律 `interrupt()` 挂起，人工 decide 后才放行。
 - 后台长任务（打招呼）在独立事件循环线程跑，**对话不阻塞**；逐岗位进度经 `/ws/agent` 广播。

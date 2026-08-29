@@ -1547,6 +1547,43 @@ td a:hover{color:var(--accent)}
 }
 .status-banner.success{background:var(--green-soft);border-color:rgba(34,197,94,.2);color:#86efac}
 
+/* ============ Agent panel (Step 6.3) ============ */
+.agent-step-row{
+  font-size:11px;
+  color:var(--text-3);
+  font-family:var(--mono);
+  padding:1px 10px;
+  display:flex;
+  align-items:center;
+  gap:6px;
+  animation:msgIn .25s var(--ease-out) backwards;
+  min-width:0;
+}
+.agent-step-row .k{color:var(--accent-2);flex-shrink:0}
+.agent-step-row .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.agent-step-card{
+  background:var(--bg-2);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  padding:10px 12px;
+  font-size:12px;
+  max-width:min(70%,640px);
+}
+.approval-args{
+  background:var(--bg-1);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  padding:8px 10px;
+  font-family:var(--mono);
+  font-size:11px;
+  white-space:pre-wrap;
+  word-break:break-all;
+  margin:8px 0;
+  color:var(--text-2);
+  max-height:160px;
+  overflow-y:auto;
+}
+
 /* ============ Mobile ============ */
 @media(max-width:768px){
   .sidebar{width:56px;padding:14px 8px}
@@ -1583,6 +1620,7 @@ td a:hover{color:var(--accent)}
       <a class="active" data-tab="search"><span class="icon">🔍</span><span>岗位搜索</span></a>
       <a data-tab="applications"><span class="icon">📋</span><span>岗位列表</span></a>
       <a data-tab="chat"><span class="icon">💬</span><span>聊天回复</span><span class="badge-count" id="navUnread" style="display:none;">0</span></a>
+      <a data-tab="agent"><span class="icon">🤖</span><span>Agent 对话</span></a>
       <a data-tab="wechat"><span class="icon">📱</span><span>微信记录</span></a>
       <a data-tab="settings"><span class="icon">⚙️</span><span>设置</span></a>
     </nav>
@@ -1857,6 +1895,37 @@ td a:hover{color:var(--accent)}
       </div>
     </div>
 
+    <!-- Tab 4: Agent (SDD Step 6.3) -->
+    <div class="tab" id="tab-agent">
+      <div class="chat-container" style="height:74vh;">
+        <div class="chat-pane">
+          <div class="chat-header">
+            <div class="header-left">
+              <div class="info">
+                <div class="name">🤖 Agent</div>
+                <div class="company" id="agentWsStatus" style="color:var(--text-3);">未连接</div>
+              </div>
+            </div>
+            <div class="header-right">
+              <button class="btn btn-sm" onclick="clearAgentPanel()">清空对话</button>
+            </div>
+          </div>
+          <div id="agentTaskArea" style="padding:10px 24px 0;display:flex;flex-direction:column;gap:8px;"></div>
+          <div class="chat-messages" id="agentMessages">
+            <div class="empty"><div class="empty-icon">🤖</div>用一句话指挥 Agent<br />例如：帮我看看有没有没打招呼的岗位，有就投了</div>
+          </div>
+          <div class="chat-input-area" style="flex-wrap:wrap;">
+            <select id="agentMode" class="search-select" style="min-width:170px;align-self:center;" onchange="onAgentModeChange()" title="§4.3 执行模式：audit 写操作逐门审批 / autonomous 全权执行">
+              <option value="audit">审计模式 audit</option>
+              <option value="autonomous">全权模式 autonomous</option>
+            </select>
+            <textarea id="agentInput" placeholder="对 Agent 下指令，Enter 发送，Shift+Enter 换行..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAgentChat();}"></textarea>
+            <button class="btn btn-sm btn-primary btn-send" id="btnAgentSend" onclick="sendAgentChat()">发送</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Tab 4: Wechat -->
     <div class="tab" id="tab-wechat">
       <div class="section" style="padding:18px 20px;">
@@ -1998,7 +2067,7 @@ function switchTab(tab){
     if(on){t.style.animation='none';t.offsetHeight;t.style.animation='';t.classList.add('active');}
     else{t.classList.remove('active');}
   });
-  document.getElementById('pageTitle').textContent={search:'岗位搜索',applications:'岗位列表',chat:'聊天回复',wechat:'微信记录',settings:'设置'}[tab]||'';
+  document.getElementById('pageTitle').textContent={search:'岗位搜索',applications:'岗位列表',chat:'聊天回复',agent:'Agent 对话',wechat:'微信记录',settings:'设置'}[tab]||'';
   if(tab==='applications'){loadApplications();refreshStatus();}
   if(tab==='chat')loadConversations();
   if(tab==='wechat'){loadWechatExchanges();startWechatAutoRefresh();}else{stopWechatAutoRefresh();}
@@ -2009,7 +2078,7 @@ document.addEventListener('click',e=>{
   let b=e.target.closest('[data-action="apply"]');if(b){applyOne(b.dataset.url,b);return;}
   b=e.target.closest('[data-action="skip"]');if(b)skipJob(b.dataset.id);
 });
-connectWS();loadSettings();refreshStatus();tickClock();
+connectWS();loadSettings();refreshStatus();tickClock();agentWsConnect();
 
 /* ===== Header clock ===== */
 function tickClock(){
@@ -3012,6 +3081,168 @@ function onPlatformChange(){
   dl.innerHTML='';
   if(cfg.models.length){cfg.models.forEach(m=>dl.innerHTML+='<option value="'+m.v+'">'+m.t+'</option>');input.value=cfg.models[0].v;input.placeholder='选择或输入模型名';}
   else{input.value='';input.placeholder='输入模型名...';}
+}
+
+/* ===== Agent 对话面板（SDD Step 6.3：chat 面板 + 审批卡片 + WS 步骤流 + 后台任务卡片）===== */
+let agentWs=null,agentThreadId=null,agentBusy=false;
+const agentTasks={};
+
+/* —— /ws/agent 连接（独立于 /ws，断线 3s 重连，契约同 agent/api.py）—— */
+function agentWsConnect(){
+  agentWs=new WebSocket((location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/ws/agent');
+  agentWs.onopen=()=>setAgentWsStatus(true);
+  agentWs.onmessage=e=>{try{handleAgentWS(JSON.parse(e.data))}catch(ex){}};
+  agentWs.onclose=()=>{setAgentWsStatus(false);setTimeout(agentWsConnect,3000);};
+  agentWs.onerror=()=>agentWs.close();
+}
+function setAgentWsStatus(on){
+  const el=document.getElementById('agentWsStatus');if(!el)return;
+  el.textContent=on?'已连接 /ws/agent':'未连接（重连中…）';
+  el.style.color=on?'var(--green)':'var(--text-3)';
+}
+function handleAgentWS(msg){
+  switch(msg.type){
+    case 'agent_connected':setAgentWsStatus(true);break;
+    case 'agent_step':appendAgentStep(msg);break;
+    case 'agent_chat_done':agentTurnEnd();break;
+    case 'agent_task_progress':updateAgentTaskCard(msg,false);break;
+    case 'agent_task_done':updateAgentTaskCard(msg,true);break;
+  }
+}
+
+/* —— 消息渲染（复用聊天页 msg-row/msg-bubble 气泡）—— */
+function appendAgentRow(html,side){
+  const pane=document.getElementById('agentMessages');
+  const empty=pane.querySelector('.empty');if(empty)empty.remove();
+  const row=document.createElement('div');row.className='msg-row '+side;row.innerHTML=html;
+  pane.appendChild(row);pane.scrollTop=pane.scrollHeight;return row;
+}
+function agentBubble(text,fromAgent){
+  const av=fromAgent?'<div class="msg-avatar ai-av">AI</div>':'<div class="msg-avatar me-av">我</div>';
+  return appendAgentRow(av+'<div class="msg-body"><div class="msg-bubble">'+esc(text).replace(/\n/g,'<br>')+'</div></div>',fromAgent?'hr':'me');
+}
+function appendAgentStep(evt){
+  const kind=evt.kind||'?';let detail='';
+  if(kind==='plan'){
+    const d=evt.llm_decision||{};
+    detail=d.action==='tool'?('决策 '+(d.name||'?')):d.action==='ask_user'?'决定反问':d.action==='report'?'决定汇报':'决策 '+(d.action||'?');
+  }else if(kind==='execute'){
+    detail='执行 '+(evt.tool_name||'')+' '+JSON.stringify(evt.tool_input||{});
+  }else if(kind==='approval'){
+    detail='审批门挂起 '+(evt.tool_name||'');
+  }else if(kind==='ask_user'){detail='向用户反问';}
+  else if(kind==='report'){detail='汇报结果';}
+  const row=document.createElement('div');row.className='agent-step-row';
+  row.innerHTML='<span>⏺</span><span class="k">'+esc(kind)+'</span><span class="t">'+esc(detail.slice(0,140))+'</span>';
+  const pane=document.getElementById('agentMessages');
+  const empty=pane.querySelector('.empty');if(empty)empty.remove();
+  pane.appendChild(row);pane.scrollTop=pane.scrollHeight;
+}
+function showAgentThinking(){
+  removeAgentThinking();
+  const row=document.createElement('div');row.id='agentThinking';row.className='agent-step-row';
+  row.innerHTML='<span class="spinner"></span><span class="t">Agent 思考中…</span>';
+  document.getElementById('agentMessages').appendChild(row);
+  row.scrollIntoView&&row.scrollIntoView({block:'end'});
+}
+function removeAgentThinking(){const t=document.getElementById('agentThinking');if(t)t.remove();}
+function agentTurnEnd(){removeAgentThinking();agentBusy=false;const b=document.getElementById('btnAgentSend');if(b)b.disabled=false;}
+
+/* —— 回合结果渲染：report / ask_user / 审批卡片（chat 与 decide 共用）—— */
+function renderAgentTurnResult(d){
+  if(d.detail){agentBubble('⚠ '+d.detail,true);return;}
+  if(d.report)agentBubble(d.report,true);
+  if(d.status==='ask_user'&&d.ask_user_question){
+    agentBubble('❓ '+d.ask_user_question,true);
+  }
+  if(d.status==='pending_approval'&&d.approval_pending)renderApprovalCard(d.approval_pending);
+  if(d.status==='completed'&&!d.report)agentBubble('（回合完成，无汇报内容）',true);
+}
+function renderApprovalCard(ap){
+  const row=appendAgentRow('<div class="msg-avatar ai-av">AI</div><div class="msg-body"><div class="agent-step-card">'
+    +'<b>🔒 审批确认：'+esc(ap.tool||'?')+'</b>'
+    +'<div class="approval-args">'+esc(JSON.stringify(ap.arguments||{},null,1))+'</div>'
+    +'<div style="display:flex;gap:6px;justify-content:flex-end;">'
+    +'<button class="btn btn-xs btn-success" onclick="decideAgentApproval('+(ap.approval_id||0)+',\'approve\',this)">批准</button>'
+    +'<button class="btn btn-xs btn-danger" onclick="decideAgentApproval('+(ap.approval_id||0)+',\'reject\',this)">拒绝</button>'
+    +'</div></div></div>','hr');
+  row.scrollIntoView&&row.scrollIntoView({block:'end'});
+}
+function decideAgentApproval(approvalId,decision,btn){
+  const card=btn.closest('.agent-step-card');
+  card.querySelectorAll('button').forEach(b=>{b.disabled=true;});
+  btn.innerHTML='<span class="spinner"></span>';
+  fetch('/api/agent/approvals/'+approvalId+'/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision})})
+    .then(r=>r.json())
+    .then(d=>{agentTurnEnd();renderAgentTurnResult(d);})
+    .catch(e=>{agentTurnEnd();agentBubble('⚠ 决策请求失败：'+e.message,true);});
+}
+
+/* —— 发送指令（audit 默认；ask_user 靠同 thread_id 续会话）—— */
+function agentSetBusy(){
+  agentBusy=true;
+  const b=document.getElementById('btnAgentSend');if(b)b.disabled=true;
+  showAgentThinking();
+}
+async function sendAgentChat(){
+  if(agentBusy)return;
+  const input=document.getElementById('agentInput');
+  const text=(input.value||'').trim();if(!text)return;
+  if(!agentThreadId)agentThreadId=(crypto.randomUUID?crypto.randomUUID():'dash-'+Date.now());
+  agentBubble(text,false);
+  input.value='';
+  agentSetBusy();
+  try{
+    const r=await fetch('/api/agent/chat',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({user_input:text,thread_id:agentThreadId,execution_mode:document.getElementById('agentMode').value||'audit'})});
+    const d=await r.json();
+    agentTurnEnd();
+    renderAgentTurnResult(d);
+  }catch(e){agentTurnEnd();agentBubble('⚠ 请求失败：'+e.message,true);}
+}
+
+/* —— 执行模式切换（§4.3：autonomous 有每日上限/DRY_RUN 兜底，但写操作不再逐门审批）—— */
+function onAgentModeChange(){
+  const sel=document.getElementById('agentMode');
+  if(sel.value==='autonomous'&&!confirm('全权模式：写操作不再逐门审批（仍有每日上限与 DRY_RUN 保护）。\n确定切换到 autonomous？')){
+    sel.value='audit';
+  }
+}
+
+/* —— 后台任务卡片（agent_task_progress/done 驱动；停止 = 手动刹车 /api/agent/tasks/{id}/stop）—— */
+function updateAgentTaskCard(msg,done){
+  const area=document.getElementById('agentTaskArea');if(!area)return;
+  let card=agentTasks[msg.task_id];
+  if(!card){
+    const el=document.createElement('div');el.className='agent-step-card agent-task-card';
+    el.style.cssText='display:flex;flex-direction:column;gap:6px;max-width:none;';
+    area.appendChild(el);
+    card={el:el};agentTasks[msg.task_id]=card;
+  }
+  const pct=msg.total?Math.round((msg.done||0)/msg.total*100):0;
+  const statusTxt=done?({completed:'完成',stopped:'已停止',failed:'失败',circuit_open:'连续失败熔断'}[msg.status]||msg.status||'结束'):'进行中';
+  card.el.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
+    +'<b style="font-size:12px;">📤 后台任务 #'+msg.task_id+' · '+esc(msg.kind||'task')+'</b>'
+    +(done?'<span class="badge badge-pending">'+esc(statusTxt)+'</span>'
+          :'<button class="btn btn-xs btn-danger" onclick="stopAgentTask('+msg.task_id+',this)">停止</button>')
+    +'</div>'
+    +'<div style="font-size:11.5px;color:var(--text-2);font-family:var(--mono);">'+(msg.done||0)+' / '+(msg.total||'?')+' · '+esc(statusTxt)+(msg.error?' · '+esc(msg.error):'')+'</div>'
+    +'<div class="batch-progress"><div class="batch-progress-bar" style="width:'+pct+'%"></div></div>';
+  if(done)setTimeout(()=>{card.el.remove();delete agentTasks[msg.task_id];},8000);
+}
+function stopAgentTask(taskId,btn){
+  if(btn){btn.disabled=true;btn.innerHTML='<span class="spinner"></span>';}
+  fetch('/api/agent/tasks/'+taskId+'/stop',{method:'POST'}).then(r=>r.json()).then(d=>{
+    toast(d.message||'已请求停止','info',3000);
+    if(btn&&!d.accepted){btn.disabled=false;btn.textContent='停止';}
+  }).catch(()=>{toast('停止请求失败','error');if(btn){btn.disabled=false;btn.textContent='停止';}});
+}
+
+/* —— 清空面板（只清 UI，不动会话与后台任务）—— */
+function clearAgentPanel(){
+  document.getElementById('agentMessages').innerHTML='<div class="empty"><div class="empty-icon">🤖</div>用一句话指挥 Agent<br />例如：帮我看看有没有没打招呼的岗位，有就投了</div>';
+  document.getElementById('agentTaskArea').innerHTML='';
+  Object.keys(agentTasks).forEach(k=>delete agentTasks[k]);
 }
 </script>
 </body>
