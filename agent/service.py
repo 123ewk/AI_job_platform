@@ -23,11 +23,12 @@ from agent.graph import DEFAULT_RECURSION_LIMIT, ToolRegistry, build_agent_graph
 from db import base as db_base
 
 
-def default_registry() -> ToolRegistry:
-    """骨架注册表：只注入 echo 假工具（只读，audit 直放，不需审批门）。
+def default_registry(engine=None) -> ToolRegistry:
+    """骨架注册表：echo 假工具（全链路验证）+ 真实只读工具 query_jobs/get_progress（3.1）。
 
-    Phase 3/4 在此逐个注册真工具（query_jobs / send_greetings ...），写工具置 write=True，
+    Phase 3/4 在此逐个追加真工具（search_jobs / send_greetings ...），写工具置 write=True，
     走审批门。工具 schema 一律 OpenAI 兼容 `tools` 声明（§4.2，Pydantic 参数校验）。
+    `engine` 缺省用真实库（`db_base.get_engine()`）；只读工具以 factory 闭包绑定该引擎。
     """
     reg = ToolRegistry()
     reg.register(
@@ -48,7 +49,9 @@ def default_registry() -> ToolRegistry:
         },
         write=False,
     )
-    return reg
+    from agent.tools import build_read_tools
+
+    return build_read_tools(engine or db_base.get_engine(), reg)
 
 
 def echo_planner_factory(user_input: str):
@@ -95,7 +98,7 @@ class AgentService:
     ) -> dict:
         """跑一个同步问答回合（决策→执行→汇报→落库），返回对外响应字典。"""
         engine = self.engine or db_base.get_engine()
-        registry = self.registry or default_registry()
+        registry = self.registry or default_registry(engine)
         planner = (self.make_planner or echo_planner_factory)(user_input)
         compiled = build_agent_graph(
             planner=planner,

@@ -97,6 +97,7 @@ def test_state_domains_are_nonempty_and_distinct():
         state.ApprovalStatus.ALL,
         state.StepStatus.ALL,
         state.StepKind.ALL,
+        state.JobStatus.ALL,  # Step 3.1：岗位状态机（applications.status 词汇）
     ]
     for d in domains:
         assert d, "状态域常量集不可为空"

@@ -13,6 +13,8 @@ tests/test_agent_state.py 用 `测试常量 == 模型默认值` 钉死，任一�
 - `ApprovalStatus` : Approval.status（§4.3 审批：pending/approved/rejected）
 - `StepStatus`     : AgentStep.status（transcript 步骤成败）
 - `StepKind`       : AgentStep.kind（步骤类型，非状态机，供回放归类）
+- `JobStatus`      : applications.status 的 Agent 岗位状态机（§4.2 工具词汇，Step 3.1 引入，
+  含 `ungreeted` 过滤所需的 GREETABLE 集合；**不另立列**，直接读写现有 applications.status）
 
 注意：DB 列本身无 CHECK 约束（见 1.1 迁移），合法性由本模块常量 + 转换规则在
 应用层把关；`TaskStatus.TRANSITIONS` / `can_transition` / `is_terminal` 即提议的
@@ -30,6 +32,7 @@ __all__ = [
     "ApprovalStatus",
     "StepStatus",
     "StepKind",
+    "JobStatus",
     "can_transition",
     "is_terminal",
 ]
@@ -106,6 +109,39 @@ class StepKind:
     REPORT: Final[str] = "report"
     ASK_USER: Final[str] = "ask_user"
     ALL: ClassVar[frozenset[str]] = frozenset({PLAN, EXECUTE, APPROVAL, REPORT, ASK_USER})
+
+
+class JobStatus:
+    """Agent 岗位状态机（§4.2 query_jobs/search_jobs 工具词汇）→ 现有 `applications.status` 列。
+
+    不另立平行列——Agent 直接读写既有 `applications.status`，与 dashboard 去重口径
+    （boss_state.applied_status）共享同一列：
+
+    - `DISCOVERED` : search_jobs 新入库（Phase 3.3 写 applications.status='discovered'）
+    - `PENDING`    : 存量默认状态（既有 apply_batch 的待投递库存口径）
+    - `GREETED`    : send_greetings 打招呼成功后（Phase 4.2 写 'greeted'）
+    - `APPLIED` / `REPLIED` / `INTERVIEW` : 存量"已进入投递/对话"状态
+    - `FILTERED`   : 投递时被关键词过滤（不可再打招呼）
+
+    `GREETABLE` = query_jobs(ungreeted=true) 的过滤集合：存量 pending + Agent 新入库
+    discovered。filtered 被排除（已按关键词过滤，不得再打招呼）；PROGRESSED 是
+    "已打过招呼/已投递对话"集合，与 GREETABLE 不相交。
+    """
+
+    DISCOVERED: Final[str] = "discovered"
+    PENDING: Final[str] = "pending"
+    GREETED: Final[str] = "greeted"
+    APPLIED: Final[str] = "applied"
+    REPLIED: Final[str] = "replied"
+    INTERVIEW: Final[str] = "interview"
+    FILTERED: Final[str] = "filtered"
+    ALL: ClassVar[frozenset[str]] = frozenset(
+        {DISCOVERED, PENDING, GREETED, APPLIED, REPLIED, INTERVIEW, FILTERED}
+    )
+    # 已打过招呼 / 已进入投递或对话 → 不可再打招呼
+    PROGRESSED: ClassVar[frozenset[str]] = frozenset({GREETED, APPLIED, REPLIED, INTERVIEW})
+    # 可打招呼库存（query_jobs ungreeted=true 的语义来源）
+    GREETABLE: ClassVar[frozenset[str]] = frozenset({PENDING, DISCOVERED})
 
 
 def can_transition(current: str, target: str) -> bool:
