@@ -24,6 +24,7 @@ from typing import Literal
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
+from agent.executor import TaskExecutor
 from agent.service import AgentService
 from db import base as db_base
 
@@ -114,6 +115,24 @@ def _get_hub(request_or_ws) -> AgentHub:
         hub = AgentHub()
         state.agent_hub = hub
     return hub
+
+
+def _get_executor(request_or_ws) -> TaskExecutor:
+    """后台任务执行器解析（app.state 优先，缺省惰性建真实引擎 + hub 广播）。
+
+    进度/终态事件走 AgentHub.notify_sync → /ws/agent 广播（spec §4.5 复用 broadcast_ws
+    思路，对话里 Agent 能答"后台任务还剩几个"）。Step 4.2 send_greetings 经此提交任务。
+    """
+    state = request_or_ws.app.state
+    ex = getattr(state, "agent_executor", None)
+    if ex is None:
+        hub = _get_hub(request_or_ws)
+        ex = TaskExecutor(
+            engine=db_base.get_engine(),
+            broadcast=lambda evt: hub.notify_sync(dict(evt)),
+        )
+        state.agent_executor = ex
+    return ex
 
 
 # ══════════════════════════════════════════════════════════
