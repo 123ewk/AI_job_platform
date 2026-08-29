@@ -178,12 +178,15 @@ def _create_approval(engine, session_id: int, step_id: int | None, tool_name: st
         return int(ap.id)
 
 
-def _get_or_create_approval(engine, session_id: int, step_id: int | None, tool_name: str, tool_input: Any) -> int:
-    """"审计挂起"审批行的幂等创建。
+def _get_or_create_approval(engine, session_id: int, step_id: int | None, tool_name: str, tool_input: Any) -> tuple[int, bool]:
+    """"审计挂起"审批行的幂等创建，返回 `(approval_id, is_new)`。
 
     LangGraph 恢复时会把整个节点函数体从头再跑一遍（interrupt() 返回 resume 值后
-    继续执行），因此 `_create_approval` 会被执行两次。这里复用在途 pending 行，
-    避免恢复后产生一条孤立的 pending 记录（§4.3 审批一致性的关键）。
+    继续执行），因此本函数会被执行两次——用 `(session_id, tool_name, step_id)`
+    定位既有行复用之（**不受审批行当前 status 限制**，见 §5.1）：decide API 在恢复前
+    已把行标成 approved/rejected，若仍按 PENDING 过滤就会在 replay 时新建第二行。
+    `is_new` 供 approval_gate 仅在新创建（首次挂起）时发一次审批的 WS 事件，避免
+    replay 重复通知。
     """
     with SASession(engine) as s:
         existing = (
@@ -192,7 +195,7 @@ def _get_or_create_approval(engine, session_id: int, step_id: int | None, tool_n
                 .where(
                     models.Approval.session_id == session_id,
                     models.Approval.tool_name == tool_name,
-                    models.Approval.status == state.ApprovalStatus.PENDING,
+                    models.Approval.step_id == step_id,
                 )
                 .order_by(models.Approval.id)
             )
@@ -200,8 +203,8 @@ def _get_or_create_approval(engine, session_id: int, step_id: int | None, tool_n
             .first()
         )
         if existing is not None:
-            return int(existing.id)
-    return _create_approval(engine, session_id, step_id, tool_name, tool_input)
+            return int(existing.id), False
+    return _create_approval(engine, session_id, step_id, tool_name, tool_input), True
 
 
 def _set_approval(engine, approval_id: int, status: str) -> None:
@@ -276,8 +279,16 @@ def build_agent_graph(*, planner, registry: ToolRegistry, engine, checkpointer=N
         grants = True
         extra: dict = {}
         if tool is not None and tool.write and st.get("execution_mode", "audit") == "audit":
-            ap_id = _get_or_create_approval(engine, st["session_id"], st.get("last_plan_step_id"), name, args)
-            verdict = interrupt({"tool": name, "arguments": state.mask_sensitive(args)})  # §3.2：展示给人工前掩码
+            ap_id, is_new = _get_or_create_approval(
+                engine, st["session_id"], st.get("last_plan_step_id"), name, args
+            )
+            # §5.1 WS 审批通知：仅首次挂起发一次（replay 幂等复用，is_new=False 不重复）
+            if is_new:
+                _notify(state.StepKind.APPROVAL, step_id=ap_id, tool_name=name, tool_input=args)
+            # §5.1 interrupt 载荷带 approval_id：chat 返回 pending_approval 时前端据其调 decide
+            verdict = interrupt({  # §3.2：展示给人工前掩码
+                "tool": name, "arguments": state.mask_sensitive(args), "approval_id": ap_id,
+            })
             if verdict == "approve":
                 _set_approval(engine, ap_id, state.ApprovalStatus.APPROVED)
             else:

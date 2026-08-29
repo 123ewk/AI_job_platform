@@ -25,7 +25,11 @@ from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from agent.executor import TaskExecutor
-from agent.service import AgentService
+from agent.service import (
+    AgentService,
+    ApprovalAlreadyDecidedError,
+    ApprovalNotFoundError,
+)
 from db import base as db_base
 
 # ══════════════════════════════════════════════════════════
@@ -46,7 +50,16 @@ class ChatResponse(BaseModel):
     session_id: int | None = None
     report: str | None = None
     ask_user_question: str | None = None
-    status: Literal["completed", "ask_user"]
+    approval_pending: dict | None = Field(
+        None, description="Step 5.1 审计挂起时返回：{tool, arguments, approval_id}，status=pending_approval"
+    )
+    status: Literal["completed", "ask_user", "pending_approval"]
+
+
+class DecideApprovalRequest(BaseModel):
+    """Step 5.1 审批门 decide：人工对审计挂起的写操作放行 / 拒绝（§4.1/§4.3）。"""
+
+    decision: Literal["approve", "reject"] = Field(..., description="approve=放行执行 / reject=拒绝并回灌 LLM 改道")
 
 
 class ResolveUnknownRequest(BaseModel):
@@ -195,6 +208,33 @@ async def stop_agent_task(task_id: int, http_request: Request) -> dict:
     }
 
 
+@agent_router.post("/api/agent/approvals/{approval_id}/decide", response_model=ChatResponse)
+async def decide_approval(approval_id: int, body: DecideApprovalRequest, http_request: Request) -> ChatResponse:
+    """Step 5.1 审批门 decide：人工放行 / 拒绝被审计挂起的写操作（§4.1/§4.3）。
+
+    **不是 Agent 工具**——批准/拒绝的权力只在人工手里（decide 恢复的是 `chat` 已
+    interrupt() 挂起的图）：`approve` 放行写工具执行；`reject` 拒绝该次工具调用并把
+    「用户拒绝」回灌 planner trace，Agent 据此改道或收尾（拒绝 ≠ 终止会话）。原来被
+    挂起的会话经 SqliteSaver checkpoint 原地恢复续跑、返回后续回合结果（可能再次
+    pending）。未知审批 → 404；已处理审批重复 decide → 409（幂等门）。
+    """
+    svc = _get_service(http_request)
+    hub = _get_hub(http_request)
+
+    def on_step(evt: dict) -> None:
+        hub.notify_sync({"type": "agent_step", "approval_id": approval_id, **evt})
+
+    try:
+        result = await svc.decide(approval_id, body.decision, on_step=on_step)
+    except (ApprovalNotFoundError, ApprovalAlreadyDecidedError) as e:
+        from fastapi.responses import JSONResponse
+
+        code = 409 if isinstance(e, ApprovalAlreadyDecidedError) else 404
+        return JSONResponse(status_code=code, content={"detail": str(e)})
+    hub.notify_sync({"type": "agent_chat_done", **result})
+    return ChatResponse(**result)
+
+
 @agent_router.post("/api/agent/applications/{application_id}/resolve-unknown")
 async def resolve_unknown(application_id: int, body: ResolveUnknownRequest, http_request: Request) -> dict:
     """Step 4.3 人工确认门：确认崩溃隔离的"结果未知"岗位（sent 与否）→ 决定可不可重发。
@@ -233,4 +273,4 @@ async def ws_agent(websocket: WebSocket) -> None:
         await hub.disconnect(websocket)
 
 
-__all__ = ["AgentHub", "ChatRequest", "ChatResponse", "ResolveUnknownRequest", "agent_router"]
+__all__ = ["AgentHub", "ChatRequest", "ChatResponse", "ResolveUnknownRequest", "DecideApprovalRequest", "agent_router"]

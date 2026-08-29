@@ -17,10 +17,20 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
+from datetime import datetime
 from typing import Any, Callable
 
+from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.types import Command
+from sqlalchemy import select
+from sqlalchemy.orm import Session as SASession
+
+from agent import state
 from agent.graph import DEFAULT_RECURSION_LIMIT, ToolRegistry, build_agent_graph
 from db import base as db_base
+from db import models
 
 
 def _runtime_paused() -> bool:
@@ -85,11 +95,65 @@ def echo_planner_factory(user_input: str):
     return _planner
 
 
+class ApprovalNotFoundError(ValueError):
+    """decide 目标审批不存在 / 无关联会话线程 → 404。"""
+
+
+class ApprovalAlreadyDecidedError(ValueError):
+    """decide 目标审批已被处理（非 pending）→ 409。"""
+
+
+def _default_checkpoint_path(engine) -> str:
+    """生产缺省 checkpoint 文件：与数据库同目录（§6「SqliteSaver 与主库同目录」）。
+
+    引擎无持久 DB 路径（内存库）时用临时目录 + 按引擎对象 id 分键，保证
+    chat/decide 对同一 engine 复用到同一文件（跨调用 resume）。
+    """
+    db_path = getattr(engine.url, "database", None)
+    if db_path and db_path != ":memory:":
+        return os.path.join(os.path.dirname(db_path), "agent_checkpoint.sqlite")
+    return os.path.join(tempfile.gettempdir(), f"agent_ckpt_{id(engine)}.sqlite")
+
+
+def resolve_approval_for_decide(engine, approval_id: int, decision: str) -> str:
+    """把审批行标为 approved/rejected（+decision + decided_at），返回其 graph_thread_id。
+
+    审计审批门 decide 的第一步（§4.1/§4.3）：人工确定后先落库、再恢复挂起的图。
+    - 审批不存在 / 无关联会话线程 → 抛 `ApprovalNotFoundError`；
+    - 已处理（非 pending）→ 抛 `ApprovalAlreadyDecidedError`（幂等门，防重复决策）。
+    事务内抛错会回滚已改的 status，不会留下半个决定。
+    """
+    with SASession(engine) as s, s.begin():
+        ap = s.get(models.Approval, approval_id)
+        if ap is None:
+            raise ApprovalNotFoundError(f"审批 {approval_id} 不存在")
+        if ap.status != state.ApprovalStatus.PENDING:
+            raise ApprovalAlreadyDecidedError(f"审批 {approval_id} 已处理（status={ap.status}）")
+        ap.status = (
+            state.ApprovalStatus.APPROVED if decision == "approve" else state.ApprovalStatus.REJECTED
+        )
+        ap.decision = decision
+        ap.decided_at = datetime.now()
+        session = s.get(models.AgentSession, ap.session_id) if ap.session_id else None
+        if session is None or not session.graph_thread_id:
+            raise ApprovalNotFoundError(f"审批 {approval_id} 无关联会话线程")
+        return session.graph_thread_id
+
+
+def _thread_user_prompt(engine, thread_id: str) -> str:
+    """取会话 user_prompt（resume 时依它重新派生 planner；拒绝回灌后要重跑 plan）。"""
+    with SASession(engine) as s:
+        row = s.execute(
+            select(models.AgentSession).where(models.AgentSession.graph_thread_id == thread_id)
+        ).scalar_one_or_none()
+        return (row.user_prompt or "") if row is not None else ""
+
+
 class AgentService:
     """决策环同步问答编排。planner / registry / engine / checkpointer 均可注入。
 
     Phase 3/4 把真实 planner（包 Step 2.2 `llm_chat_functions`）与真实工具注册表注入，
-    或用子类复写 `chat`，路由层不感知。
+    或用子类复写，路由层不感知。
     """
 
     def __init__(
@@ -113,26 +177,84 @@ class AgentService:
         *,
         on_step: Callable[[dict], Any] | None = None,
     ) -> dict:
-        """跑一个同步问答回合（决策→执行→汇报→落库），返回对外响应字典。"""
+        """跑一个同步问答回合（决策→执行→汇报→落库），返回对外响应字典。
+
+        遇审计写工具挂起时返回 `status="pending_approval"` + `approval_pending`
+        （含 approval_id），由 decide 端点接管（反而不返回 completed）。
+        """
+        out = await self._invoke(
+            thread_id=thread_id,
+            user_input=user_input,
+            execution_mode=execution_mode,
+            on_step=on_step,
+        )
+        return self._response(out, thread_id=thread_id)
+
+    async def decide(self, approval_id: int, decision: str, *, on_step: Callable[[dict], Any] | None = None) -> dict:
+        """审批门 decide（§5.1）：标记审批行 → 恢复挂起的图（Command(resume=decision)）。
+
+        放行：工具执行继续；拒绝：图把"用户拒绝了 X"回灌 planner trace → Agent 改道/
+        收尾（§4.3 reject ≠ 终止会话）。返回续跑后的响应字典（可能再次 pending）。
+        """
+        engine = self.engine or db_base.get_engine()
+        thread_id = resolve_approval_for_decide(engine, approval_id, decision)
+        out = await self._invoke(
+            thread_id=thread_id,
+            user_input=_thread_user_prompt(engine, thread_id),  # reject 后 replan 的 planner 入参
+            execution_mode="audit",  # resume 不重建初态，此仅占位
+            resume=decision,
+            on_step=on_step,
+        )
+        return self._response(out, thread_id=thread_id)
+
+    # ── 内部：建图 + 阻塞调用（跑在 to_thread 线程里）──
+    async def _invoke(self, *, thread_id, user_input, execution_mode, resume: str | None = None, on_step=None):
         engine = self.engine or db_base.get_engine()
         registry = self.registry or default_registry(engine)
         planner = (self.make_planner or echo_planner_factory)(user_input)
-        compiled = build_agent_graph(
-            planner=planner,
-            registry=registry,
-            engine=engine,
-            checkpointer=self.checkpointer,
-            on_step=on_step,
-        )
-        out = await asyncio.to_thread(
-            compiled.invoke,
-            {
+        config = {"thread_id": thread_id, "recursion_limit": DEFAULT_RECURSION_LIMIT}
+
+        if resume is None:
+            def _run(compiled):
+                return compiled.invoke(
+                    {"thread_id": thread_id, "user_input": user_input, "execution_mode": execution_mode},
+                    config,
+                )
+        else:
+            def _run(compiled):  # noqa: F811
+                return compiled.invoke(Command(resume=resume), config)
+
+        def _build_and_run(checkpointer):
+            compiled = build_agent_graph(
+                planner=planner, registry=registry, engine=engine,
+                checkpointer=checkpointer, on_step=on_step,
+            )
+            return _run(compiled)
+
+        if self.checkpointer is not None:
+            # 测试/注入的 saver
+            return await asyncio.to_thread(_build_and_run, self.checkpointer)
+        # 生产缺省：SqliteSaver 文件，chat/decide 各自在工作线程打开同文件 → 跨调用原地恢复
+
+        def _prod():  # noqa: ANN202
+            with SqliteSaver.from_conn_string(_default_checkpoint_path(engine)) as saver:
+                return _build_and_run(saver)
+
+        return await asyncio.to_thread(_prod)
+
+    @staticmethod
+    def _response(out: dict, *, thread_id: str) -> dict:
+        """把图 invoke 输出转成对外响应；遇 `__interrupt__`（审计挂起）回 pending。"""
+        inter = out.get("__interrupt__")
+        if inter:
+            first = inter[0] if isinstance(inter, (list, tuple)) else inter
+            payload = getattr(first, "value", first) if not isinstance(first, dict) else first
+            return {
                 "thread_id": thread_id,
-                "user_input": user_input,
-                "execution_mode": execution_mode,
-            },
-            {"thread_id": thread_id, "recursion_limit": DEFAULT_RECURSION_LIMIT},
-        )
+                "session_id": out.get("session_id"),
+                "approval_pending": payload,
+                "status": "pending_approval",
+            }
         status = "ask_user" if out.get("ask_user_question") else "completed"
         return {
             "thread_id": thread_id,
@@ -143,4 +265,10 @@ class AgentService:
         }
 
 
-__all__ = ["AgentService", "default_registry", "echo_planner_factory"]
+__all__ = [
+    "AgentService",
+    "ApprovalNotFoundError",
+    "ApprovalAlreadyDecidedError",
+    "default_registry",
+    "echo_planner_factory",
+]
