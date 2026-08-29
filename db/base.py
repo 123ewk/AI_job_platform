@@ -30,10 +30,13 @@ DB_BACKEND = os.environ.get("DB_BACKEND", "sqlite")
 _DEFAULT_DB_DIR = Path(__file__).resolve().parents[1] / ".boss_profile"
 _DEFAULT_DB = _DEFAULT_DB_DIR / "boss_state_sa.db"
 
+# `sa` 是 sqlite 的语义别名（SDD 1.3 开关用 `DB_BACKEND=legacy` 回退存量，其余走 SA）。
+_SQLITE_BACKENDS = ("sqlite", "sa")
+
 
 def get_db_path() -> Path:
-    """返回数据库文件路径（sqlite 后端）。"""
-    if DB_BACKEND != "sqlite":
+    """返回数据库文件路径（sqlite/sa 后端）。"""
+    if DB_BACKEND not in _SQLITE_BACKENDS:
         raise NotImplementedError(f"DB_BACKEND={DB_BACKEND} 本期未实施，仅支持 sqlite")
     override = os.environ.get("AI_PLATFORM_DB")
     if override:
@@ -43,7 +46,7 @@ def get_db_path() -> Path:
 
 def get_engine(url: str | None = None) -> Engine:
     """构造 SQLite 引擎（WAL + FK）。供 Alembic 与适配层共用。"""
-    if DB_BACKEND != "sqlite":
+    if DB_BACKEND not in _SQLITE_BACKENDS:
         raise NotImplementedError(f"DB_BACKEND={DB_BACKEND} 本期未实施，仅支持 sqlite")
     if url is None:
         path = get_db_path()
