@@ -243,7 +243,7 @@ class FlowLock:          # agent/flow_lock.py（新增）
   - **boss_company 两个数据函数历史上被删**：`list_companies_by_position_count`/`list_jobs_by_company`（fork 时从 boss_state 移除，仅 boss_company 引用），已从历史取回、补入适配层 `db.boss_state_sa` 并加单测。
   - boss_replier `_read_jd_summary` 弃用 `get_db().cursor()`（SA Connection 无 cursor），改走高层 API。
   - ⚠️ 遗留：boss_company 顶层还 import `pick_top_hr`（smart-send 未合入的半成品功能，非数据层范围），不在 1.3 解决，相关测试已 skip。
-- **1.4 迁移 CLI + 冒烟**：`db/migrate_legacy.py` 幂等迁移真实数据（旧 schema → 新 schema）；验收：迁移后 dashboard 各页面数据与迁移前一致。
+- **1.4 迁移 CLI + 冒烟** ✅ 已完成（2026-08-29）：`db/migrate_legacy.py` 幂等迁移真实数据（旧 schema → 新 schema）。验收：**数据保全**（迁移后 7 张业务表按主键逐行逐列等于源库）+ **dashboard 口径一致**（迁移后 `db.boss_state_sa` 对同一份数据重放只读 dashboard 函数，快照与存量 `boss_state` 完全相等）+ **幂等**（重复迁移 inserted=0、计数不变、三次稳定）。真实数据实测：507 岗位/4 会话/12 消息/25 设置/1 日统计共 549 行迁入 `.boss_profile/boss_state_sa.db`，重复运行 0 新写；12 项 dashboard 聚合（总数/已投/筛选/今日/会话/微信/统计/候选/公司去重等）legacy 与迁后 SA 逐项相等。
 
 ### Phase 2 · Agent 骨架（不接真工具，全部可用假工具测）
 
@@ -299,6 +299,7 @@ class FlowLock:          # agent/flow_lock.py（新增）
 
 ## 11. 变更记录
 
+- 2026-08-29 V1.2.6（随 Step 1.4 提交）：①新增 `db/migrate_legacy.py` 幂等迁移 CLI——存量 `boss_state.db` → SQLAlchemy 库 `boss_state_sa.db`，逐行保留主键（FK 与 dashboard 按 id 引用在迁移前后一致），`INSERT OR IGNORE` 幂等（重复运行 no-op），源库只读打开，目标 schema 缺失用 `Base.metadata.create_all` 自建（与 alembic 初始迁移同 DDL）；支持 `--dry-run`/`--schema-only`。②单测 `tests/test_migrate_legacy.py` 三条验收线：数据保全（逐行逐列相等，按列名比对以忽略列序差异）、dashboard 口径一致（只读函数快照新旧相等）、幂等（二次/三次无新写、预演零写入、缺源库报错）。③真实数据冒烟：507 岗位/4 会话/12 消息/25 设置/1 日统计共 549 行迁入，重复运行 0 新写；12 项 dashboard 聚合 legacy 与迁后 SA 逐项相等（SMOKE PASS）。
 - 2026-08-29 V1.2.5（随 Step 1.3 提交）：①新建 `db/backend.py` DB_BACKEND 薄转发开关（legacy 回退存量 / 其余走 SA 适配层）；②boss_app/boss_automation/boss_replier/boss_company 逐文件切换 `from db.backend import` 并纳入 ruff lint，各一个 commit；③修复 interview sys.path 毒（boss_replier 改包路径 import interview.llm_client）、boss_app 缺 pause 导入、poll_conversation_list hr_company/hr_title 未赋值、CITY_CODE 重复键及多种存量 lint 债；④补回 boss_company 两个被删数据函数（list_companies_by_position_count/list_jobs_by_company）入适配层 + 单测；⑤boss_replier _read_jd_summary 改走高维 API。
 - 2026-08-28 V1.2.3（随 Step 1.1 提交）：①建 `db/` 包（SQLAlchemy 2.0 声明式 + 引擎工厂）+ Alembic 初始迁移（11 表），DB 文件默认 `.boss_profile/boss_state_sa.db`（与存量 `boss_state.db` 分开，Step 1.4 迁移）；②`alembic/env.py` 不读 ini 的 url，改用 `db.base.get_engine()` 统一来源。③Agent 4 新表本轮建模，状态机常量留待 Step 2.1。
 - 2026-08-28 V1.2.4（随 Step 1.2 提交）：①新建 `db/boss_state_sa.py` 适配层——基于 SQLAlchemy 引擎用 `exec_driver_sql` 逐字复用存量 SQL，对齐 boss_state.py 全部公开函数签名与常量；②差分单测 `tests/test_boss_state_sa.py`（新旧两套对同一组 scenario 电池返回快照逐项相等）；③为行为一致修正 §1.1 模型 schema：13 个 Python 侧 default 改库级 server_default、companies 表补 UNIQUE(name COLLATE NOCASE, company_id) + idx_companies_name/idx_companies_fetched_at，同步 alembic 初始迁移。
