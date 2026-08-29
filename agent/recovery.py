@@ -68,8 +68,14 @@ def recover_interrupted_tasks(engine, *, broadcast: Callable[[dict], Any] | None
             task.finished_at = datetime.now()
             interrupted += 1
             logger.warning("agent_task=%s 崩溃恢复：%s → %s", task.id, old_status, task.status)
-            # 仅 running 任务有在途岗位：已完成单位数 < 总单位数 时下一位在途
-            if was_running and task.progress_done < task.progress_total:
+            # 仅 running 任务有在途岗位：已完成单位数 < 总单位数 时下一位在途。
+            # Step 5.3 DRY_RUN 任务（params.dry_run=True）从未实际发送 → 无"结果未知"岗位，
+            # 不做 unknown 隔离（在途 job 保持 GREETABLE，真实运行时仍可安全续投）。
+            if (
+                was_running
+                and task.progress_done < task.progress_total
+                and not (task.params or {}).get("dry_run")
+            ):
                 urls = list((task.params or {}).get("job_urls") or [])
                 idx = task.progress_done or 0  # 0 基在途下标 = 已完成单位数
                 if urls and 0 <= idx < len(urls):

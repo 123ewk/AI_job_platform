@@ -216,6 +216,8 @@ def get_progress_factory(engine) -> Callable[[], dict]:
         effective_limit = min(daily_limit, MAX_APPLY_PER_DAY)
         return {
             "date": date.today().isoformat(),
+            # Step 5.3：上报全局 DRY_RUN 演练标志（Agent 据此汇报"当前是演练模式，不会实际发送"）
+            "dry_run": _get_dry_run(engine),
             "today_applied": today_applied,
             "daily_limit": daily_limit,
             "effective_limit": effective_limit,
@@ -235,11 +237,14 @@ def update_setting_factory(engine) -> Callable[..., dict]:
     `key` 必填、`value` 可缺省——Pydantic `UpdateSettingParams(**kwargs)` 先校验（L3），
     缺 key 返回 `{"error":...}` 而非 TypeError。
 
-    安全边界（spec §3.2）：
+    安全边界（spec §3.2/§5.3）：
     1. **白名单**：key 不在 `SETTINGS_WHITELIST` → 拒绝（回 `allowed` 清单供 LLM 自纠）。
     2. **敏感键**：ai_api_key/wechat_id **全模式硬拒**（autonomous 也不放过，实现时定的最严
        解释；Agent 无路径改敏感键，唯一可写路径是人工 /api/settings）。日志只记掩码。
-    3. **不落原始值**：返回结果回显的值经 `mask_sensitive`，transcript 由 graph 层统一脱敏。
+    3. **系统级安全开关**（Step 5.3）：dry_run 等 `SAFETY_SETTING_KEYS` **全模式硬拒**——Agent
+       不得关闭/绕过 DRY_RUN 演练保护（§4.3"系统级安全规则不可被 LLM 覆盖"），唯一可写路径
+       是人工 /api/settings。
+    4. **不落原始值**：返回结果回显的值经 `mask_sensitive`，transcript 由 graph 层统一脱敏。
     """
 
     def update_setting(**kwargs: Any) -> dict:
@@ -265,6 +270,17 @@ def update_setting_factory(engine) -> Callable[..., dict]:
                 ),
                 "masked": True,
             }
+        if key in state.SAFETY_SETTING_KEYS:
+            # 系统级安全开关（Step 5.3 DRY_RUN 演练保护）：Agent 不得关闭/绕过演练保护
+            logger.warning("update_setting 安全开关被拒：key=%s（DRY_RUN 演练保护，仅人工可改）", key)
+            return {
+                "error": "系统级安全开关拒绝",
+                "message": (
+                    f"key={key} 是系统级安全开关（DRY_RUN 演练保护），Agent 不得关闭或绕过演练保护；"
+                    "请人工在 /api/settings 修改"
+                ),
+                "safety": True,
+            }
         with SASession(engine) as s, s.begin():
             if s.get(models.Setting, key) is not None:
                 s.execute(
@@ -289,6 +305,11 @@ def _get_setting_value(engine, key: str, default: str) -> str:
     with SASession(engine) as s:
         row = s.get(models.Setting, key)
     return row.value if row is not None and row.value else default
+
+
+def _get_dry_run(engine) -> bool:
+    """读全局 dry_run 设置（Step 5.3 DRY_RUN 演练开关）。真值集：1/true/yes/on（大小写不敏感）。"""
+    return _get_setting_value(engine, "dry_run", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _normalize_url(url: str) -> str:
@@ -673,6 +694,7 @@ def build_greeting_unit(
     lock: FlowLock | None = None,
     get_automation: Callable[[], Any] | None = None,
     pw_runner: Callable[..., Any] | None = None,
+    dry_run: bool = False,
 ) -> Callable[[int], dict]:
     """构造打招呼单位函数 `unit(i)`（i 从 1 开始，与 executor 单位下标一致），供后台任务驱动。
 
@@ -682,6 +704,10 @@ def build_greeting_unit(
     2. 成功后 `_mark_greeted` 写库（置 greeted + 招呼语 + 时间戳）；
     再由 executor 在单位之间检查停止标志并在进入下一单位前落 progress_done——结束当前 DB 语义
     才可见"发下一个"。
+
+    `dry_run=True`（Step 5.3 DRY_RUN 演练）：本单位**只记"将要发送"，不发浏览器、不改状态**
+    （不拿锁、不调 apply_batch、不 _mark_greeted）——演练不消耗真实库存/今日额度，返回
+    `{"dry_run": True, "would_send": {...}}` 载荷；job 保持 ungreeted，可安全重来。
     """
     flow = lock if lock is not None else default_flow_lock
     loader = get_automation or _default_get_automation
@@ -690,6 +716,20 @@ def build_greeting_unit(
     def _unit(i: int) -> dict:
         job = jobs[i - 1]
         url = job["job_url"]
+        if dry_run:
+            # Step 5.3：DRY_RUN 演练——只记"将要发送"，绝不碰浏览器/绝不改状态（不 _mark_greeted）。
+            title = job.get("title") or job.get("job_title") or ""
+            company = job.get("company") or ""
+            logger.warning("DRY_RUN 演练：将要发送「%s」@「%s」（%s），未实际发送", title, company, url)
+            return {
+                "dry_run": True,
+                "would_send": {
+                    "job_url": url, "title": title, "company": company, "greeting": greeting,
+                },
+                "job_url": url,
+                "success": True,
+                "message": "DRY_RUN：未实际发送（演练）",
+            }
         owner = f"agent:send_greetings:{(url or 'job')[-24:]}"
         # §4.6：单位内拿锁（阻塞排队），HR 监控轮询非阻塞让路
         if not flow.acquire(owner, blocking=True):
@@ -755,6 +795,10 @@ def send_greetings_factory(
 
     后台每个单位由 `build_greeting_unit` 驱动（包既有 apply_batch + 逐岗位先写库再发下一个）。
     `executor` / `lock` / `get_automation` / `pw_runner` / `paused` 均可注入（测试注入假件）。
+
+    Step 5.3 DRY_RUN：提交时读全局 `dry_run` 设置并**烘焙进后台单位**（任务中途改设置不影响
+    已提交任务的演练一致性）——dry_run 下工具照常提交后台任务（审批门 / 进度 / 终态全链路
+    照演练），但每个单位只记"将要发送"不发浏览器；返回体带 `dry_run` 标志供 Agent 汇报。
     """
     flow = lock if lock is not None else default_flow_lock
     loader = get_automation or _default_get_automation
@@ -769,6 +813,9 @@ def send_greetings_factory(
 
         if is_paused():
             return {"error": "监控已暂停", "message": "用户已暂停监控，请恢复后再打招呼"}
+
+        # Step 5.3：读全局 dry_run 演练开关（提交时定，烘焙进单位；安全开关 Agent 只读）
+        dry_run = _get_dry_run(engine)
 
         progress = get_progress_factory(engine)()
         remaining = progress.get("remaining", 0) or 0
@@ -799,13 +846,18 @@ def send_greetings_factory(
         task_id = ex.submit(
             kind="send_greetings",
             total=len(jobs),
-            unit_fn=build_greeting_unit(engine, jobs, greeting, lock=flow, get_automation=loader, pw_runner=runner),
+            unit_fn=build_greeting_unit(
+                engine, jobs, greeting, lock=flow, get_automation=loader, pw_runner=runner, dry_run=dry_run,
+            ),
             params={
                 "count": len(jobs),
                 "greeting": greeting,
                 # 崩溃恢复（Step 4.3）用 job_urls 把 progress_done 下标映射回在途岗位，
                 # 定位"发送结果未知"岗位做隔离，防止续投重复打招呼。
                 "job_urls": [j["job_url"] for j in jobs],
+                # Step 5.3：dry_run 标记进 params——恢复逻辑对演练任务不做 unknown 隔离
+                #（演练从未实际发送，无"结果未知"岗位；见 agent/recovery.py）。
+                "dry_run": dry_run,
             },
             # Step 4.4 连续失败熔断联动：单家 HR 瞬败（如页面偶发错误）不拖垮整批，但
             # 连续 3 家崩（浏览器可能卡死）即熔断停止剩余单位，防止空转整个批次。
@@ -818,6 +870,7 @@ def send_greetings_factory(
             "remaining": remaining,
             "daily_limit": progress.get("daily_limit"),
             "effective_limit": progress.get("effective_limit"),
+            "dry_run": dry_run,
         }
 
     return send_greetings

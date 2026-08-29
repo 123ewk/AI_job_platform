@@ -1092,6 +1092,7 @@ class SettingsUpdate(BaseModel):
     filter_inactive_hr: Optional[str] = None  # 跳过不活跃HR开关
     dedup_company_by_default: Optional[str] = None  # 公司去重开关
     max_hr_inactive_days: Optional[str] = None  # HR不活跃天数阈值
+    dry_run: Optional[str] = None  # DRY_RUN 演练开关（全局，仅人工 /api/settings 可改；Agent 只读，不能自关）
 
 
 # ══════════════════════════════════════

@@ -22,6 +22,12 @@ Step 3.2 追加两类安全常量：
 - `SENSITIVE_SETTING_KEYS`：敏感设置键（ai_api_key/wechat_id，spec §4.2 明示）——update_setting
   **全模式硬拒**，唯一可写路径是人工 `/api/settings`；配合 `mask_sensitive` 在日志/transcript 脱敏。
 
+Step 5.3 追加 `SAFETY_SETTING_KEYS`：系统级安全开关（`dry_run` = DRY_RUN 演练保护）——
+Agent **只读**（get_progress/send_greetings 读取，汇报当前是否演练模式），update_setting
+全模式硬拒——Agent 不得关闭演练保护（§4.3"系统级安全规则不可被 LLM 覆盖"），唯一可写
+路径是人工 `/api/settings`。与 SENSITIVE_SETTING_KEYS 同构（白名单子集）但语义不同：不是秘密，
+是**安全开关**。
+
 注意：DB 列本身无 CHECK 约束（见 1.1 迁移），合法性由本模块常量 + 转换规则在
 应用层把关；`TaskStatus.TRANSITIONS` / `can_transition` / `is_terminal` 即提议的
 唯一转换通道，后台执行器（Phase 4）据此驱动。
@@ -43,6 +49,7 @@ __all__ = [
     "JobStatus",
     "SETTINGS_WHITELIST",
     "SENSITIVE_SETTING_KEYS",
+    "SAFETY_SETTING_KEYS",
     "mask_sensitive",
     "can_transition",
     "is_terminal",
@@ -175,12 +182,19 @@ SETTINGS_WHITELIST: Final[frozenset[str]] = frozenset({
     "ai_api_key", "ai_base_url", "ai_model", "ai_platform", "user_location",
     "conversation_cooldown_sec", "reply_rules_system_prompt", "filter_inactive_hr",
     "dedup_company_by_default", "max_hr_inactive_days",
+    "dry_run",
 })
 
 # 敏感设置键：update_setting 一律拒绝（全模式，autonomous 也不放过）。§4.2 明示 api_key、
 # wechat_id；§3.2"强制审计模式"取最严解释——Agent 无路径改敏感键，唯一可写路径是
 # 人工 `/api/settings`。is subset of SETTINGS_WHITELIST（白名单通过、再被敏感检查拦截）。
 SENSITIVE_SETTING_KEYS: Final[frozenset[str]] = frozenset({"ai_api_key", "wechat_id"})
+
+# 系统级安全开关（Step 5.3）：update_setting 全模式硬拒（Agent 不得关闭/绕过演练保护）。
+# `dry_run` = 全局 DRY_RUN 演练开关——send_greetings 在 dry_run 下只记"将要发送"不发浏览器；
+# Agent 只读（get_progress 上报标志），唯一可写路径是人工 `/api/settings`。
+# is subset of SETTINGS_WHITELIST（白名单通过、再被安全护栏拦截；与敏感键同构但语义不同）。
+SAFETY_SETTING_KEYS: Final[frozenset[str]] = frozenset({"dry_run"})
 
 _MASK = "***"
 
