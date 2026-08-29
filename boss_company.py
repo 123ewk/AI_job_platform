@@ -8,10 +8,10 @@
 数据拼装和给前端 / API 的统一 dict 在这里完成。
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, Optional
 
 from boss_automation import pick_top_hr
-from boss_state import list_jobs_by_company, list_companies_by_position_count
+from db.backend import list_companies_by_position_count, list_jobs_by_company
 
 
 def _normalize_job_url(url: str) -> str:
@@ -23,7 +23,7 @@ def _normalize_job_url(url: str) -> str:
 
 
 def rank_companies_by_position_count(limit: int = 10) -> List[Dict[str, Any]]:
-    """直接调 boss_state.list_companies_by_position_count。
+    """直接调数据层 list_companies_by_position_count（经 db.backend）。
     返回 [{company, company_id, position_count, latest_job_id}, ...]"""
     return list_companies_by_position_count(min_count=1, limit=limit)
 
@@ -42,7 +42,6 @@ def build_company_preview(
     jobs = jobs or []
     hrs = hrs or []
 
-    job_urls = [j.get("url") for j in jobs if j.get("url")]
     for j in jobs:
         if j.get("url"):
             j["url"] = _normalize_job_url(j["url"])

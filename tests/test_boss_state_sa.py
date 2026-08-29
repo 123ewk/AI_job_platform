@@ -195,3 +195,30 @@ def test_daily_stat_accumulates(tmp_path, monkeypatch):
     sa_mod.increment_daily_stat("messages_sent")
     sa_mod.increment_daily_stat("messages_sent")
     assert sa_mod.get_daily_stats()["messages_sent"] == 2
+
+
+def test_boss_company_api(tmp_path, monkeypatch):
+    """公司画像两个函数（Step 1.3 从历史存量补回适配层）：
+    list_companies_by_position_count / list_jobs_by_company 聚合与按公司查询语义。"""
+    m = _reset_sa(monkeypatch, tmp_path)
+    # 4 个岗位：字节跳动(bytedance) 2 个、字节跳动(无id) 1 个、阿里 1 个
+    m.add_application({"title": "算法工程师", "company": "字节跳动", "company_id": "bytedance", "url": "u1"})
+    m.add_application({"title": "后端开发", "company": "字节跳动", "company_id": "bytedance", "url": "u2"})
+    m.add_application({"title": "前端开发", "company": "字节跳动", "url": "u3"})
+    m.add_application({"title": "数据科学", "company": "阿里", "url": "u4"})
+
+    # 按公司聚合：COALESCE(company_id, company) 分组，(字节跳动, bytedance) 计数 2 居首
+    rank = m.list_companies_by_position_count(min_count=1)
+    top = rank[0]
+    assert top["company"] == "字节跳动"
+    assert top["position_count"] == 2
+
+    # 按 company_id 查岗位：2 条，id 倒序（u2 后插在前）
+    jobs = m.list_jobs_by_company(company_id="bytedance")
+    assert len(jobs) == 2
+    assert jobs[0]["job_url"] == "u2"
+
+    # 按 company 名兜底：阿里 1 条
+    by_name = m.list_jobs_by_company(company="阿里")
+    assert len(by_name) == 1
+    assert by_name[0]["job_url"] == "u4"

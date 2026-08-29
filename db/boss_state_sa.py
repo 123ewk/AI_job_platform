@@ -878,3 +878,43 @@ def clear_all_conversations() -> int:
     db.exec_driver_sql("DELETE FROM conversations")
     db.commit()
     return conv_count
+
+
+# ══════════════════════════════════════
+#  公司画像（boss_company 专用）
+# ══════════════════════════════════════
+def list_companies_by_position_count(min_count: int = 1, limit: int = 50) -> list:
+    """按公司聚合，统计 distinct job_url 数倒序，返回 [{company, company_id, position_count, latest_job_id}]。
+    company_id 为空的公司会被单独归到 (company, '')。"""
+    rows = get_db().exec_driver_sql(
+        """SELECT company, company_id, COUNT(DISTINCT job_url) AS position_count, MAX(id) AS latest_job_id
+           FROM applications
+           WHERE company != '' AND job_url != ''
+           GROUP BY company, COALESCE(NULLIF(company_id, ''), company)
+           HAVING position_count >= ?
+           ORDER BY position_count DESC, latest_job_id DESC
+           LIMIT ?""",
+        (min_count, limit),
+    ).fetchall()
+    return _rows_to_list(rows)
+
+
+def list_jobs_by_company(company_id: str = "", company: str = "") -> list:
+    """按 company_id 或 company 名返回该公司下所有已入库的岗位。
+    优先用 company_id；为空时用 company 名兜底。"""
+    db = get_db()
+    if company_id:
+        rows = db.exec_driver_sql(
+            "SELECT * FROM applications WHERE company_id=? ORDER BY id DESC",
+            (company_id,),
+        ).fetchall()
+        if rows:
+            return _rows_to_list(rows)
+    if company:
+        return _rows_to_list(
+            db.exec_driver_sql(
+                "SELECT * FROM applications WHERE company=? ORDER BY id DESC",
+                (company,),
+            ).fetchall()
+        )
+    return []
