@@ -98,6 +98,8 @@ def test_state_domains_are_nonempty_and_distinct():
         state.StepStatus.ALL,
         state.StepKind.ALL,
         state.JobStatus.ALL,  # Step 3.1：岗位状态机（applications.status 词汇）
+        state.SETTINGS_WHITELIST,  # Step 3.2：update_setting 白名单（=手动设置 API 字段集）
+        state.SENSITIVE_SETTING_KEYS,  # Step 3.2：敏感设置键（全模式拒绝，脱敏掩码）
     ]
     for d in domains:
         assert d, "状态域常量集不可为空"

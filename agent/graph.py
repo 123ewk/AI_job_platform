@@ -5,7 +5,10 @@
 - 审计模式写工具在 `approval_gate` 用原生 `interrupt()` 挂起，`Command(resume=...)`
   放行，checkpoint 使「进程重启后挂起会话原地恢复」；
 - `recursion_limit` 熔断（默认 12）替代手写 max_steps；
-- 每步落到 `agent_steps`（transcript，§4.7），汇报写回 `agent_sessions.final_report`。
+- 每步落到 `agent_steps`（transcript，§4.7），汇报写回 `agent_sessions.final_report`；
+- **脱敏（§3.2/§4.3）**：落库 / WS 外发 / 审批展示前对 tool_input、tool_output、
+  llm_decision、trace 统一跑 `state.mask_sensitive`——api_key/wechat_id/手机号在
+  transcript 与日志一律掩码，持久层不留原始密钥（Step 3.2 引入）。
 
 **plan 节点**的 LLM 由注入的 `planner(messages, tool_schemas) -> decision` 扮演：
   {"action": "tool",  "name": str, "arguments": dict}      → 调工具（走执行链）
@@ -150,9 +153,10 @@ def _persist_step(
             session_id=session_id,
             kind=kind,
             tool_name=tool_name,
-            tool_input=tool_input,
-            tool_output=tool_output,
-            llm_decision=llm_decision,
+            # §3.2 脱敏：transcript 落库前掩码敏感值（api_key/wechat_id/手机号），不留原始密钥
+            tool_input=state.mask_sensitive(tool_input),
+            tool_output=state.mask_sensitive(tool_output),
+            llm_decision=state.mask_sensitive(llm_decision),
             status=state.StepStatus.DONE,
         )
         s.add(st)
@@ -166,7 +170,7 @@ def _create_approval(engine, session_id: int, step_id: int | None, tool_name: st
             session_id=session_id,
             step_id=step_id,
             tool_name=tool_name,
-            tool_input=tool_input,
+            tool_input=state.mask_sensitive(tool_input),  # §3.2：审批行也不落原始密钥
             status=state.ApprovalStatus.PENDING,
         )
         s.add(ap)
@@ -233,16 +237,19 @@ def build_agent_graph(*, planner, registry: ToolRegistry, engine, checkpointer=N
       对话 API 据此经 WebSocket 推送步骤进度（§3 对话入口）。缺省 None（2.3 行为不变）。
     """
     def _notify(kind: str, *, step_id: int, tool_name=None, tool_input=None, llm_decision=None) -> None:
-        """每步完成回调：Step 2.4 WS 进度推送的使能点（缺省 on_step=None 为 no-op）。"""
+        """每步完成回调：Step 2.4 WS 进度推送的使能点（缺省 on_step=None 为 no-op）。
+
+        §3.2 脱敏：外发到前端的 tool_input/llm_decision 先掩码敏感值。
+        """
         if on_step is None:
             return
         event: dict = {"kind": kind, "step_id": step_id}
         if tool_name is not None:
             event["tool_name"] = tool_name
         if tool_input is not None:
-            event["tool_input"] = tool_input
+            event["tool_input"] = state.mask_sensitive(tool_input)
         if llm_decision is not None:
-            event["llm_decision"] = llm_decision
+            event["llm_decision"] = state.mask_sensitive(llm_decision)
         on_step(event)
 
     # ── plan：LLM 决策 + 决策字面落库 ──
@@ -256,7 +263,8 @@ def build_agent_graph(*, planner, registry: ToolRegistry, engine, checkpointer=N
             "session_id": sid,
             "decision": decision,
             "last_plan_step_id": step_id,
-            "trace": trace + [{"role": "assistant", "decision": decision}],
+            # §3.2 脱敏：回灌/checkpoint 的 trace 掩码敏感值（执行仍用 st["decision"] 原始参）
+            "trace": trace + [{"role": "assistant", "decision": state.mask_sensitive(decision)}],
         }
 
     # ── approval_gate：审计写工具 interrupt，放行/拒绝 ──
@@ -269,7 +277,7 @@ def build_agent_graph(*, planner, registry: ToolRegistry, engine, checkpointer=N
         extra: dict = {}
         if tool is not None and tool.write and st.get("execution_mode", "audit") == "audit":
             ap_id = _get_or_create_approval(engine, st["session_id"], st.get("last_plan_step_id"), name, args)
-            verdict = interrupt({"tool": name, "arguments": args})
+            verdict = interrupt({"tool": name, "arguments": state.mask_sensitive(args)})  # §3.2：展示给人工前掩码
             if verdict == "approve":
                 _set_approval(engine, ap_id, state.ApprovalStatus.APPROVED)
             else:
@@ -296,7 +304,12 @@ def build_agent_graph(*, planner, registry: ToolRegistry, engine, checkpointer=N
         )
         _notify(state.StepKind.EXECUTE, step_id=step_id, tool_name=name, tool_input=args, llm_decision=dec)
         resp = {"tool": name, "output": out}
-        return {"tool_result": resp, "trace": st.get("trace", []) + [{"role": "tool", "content": json.dumps(resp, ensure_ascii=False)}]}
+        return {
+            "tool_result": resp,
+            # §3.2 脱敏：工具输出回灌 trace（planner 可见 + checkpoint 持久）前掩码敏感值
+            "trace": st.get("trace", [])
+            + [{"role": "tool", "content": json.dumps(state.mask_sensitive(resp), ensure_ascii=False)}],
+        }
 
     # ── ask_user：反问结束本轮（§4.4，禁止编默认值）──
     def _ask_user(st: AgentState) -> dict:

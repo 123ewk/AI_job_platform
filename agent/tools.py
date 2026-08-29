@@ -1,9 +1,12 @@
-"""agent/tools.py — Agent 只读工具（SDD Step 3.1，§4.2 工具清单）。
+"""agent/tools.py — Agent 工具（SDD Step 3.1 只读 / 3.2 写配置，§4.2 工具清单）。
 
-实现第一批"真"工具（相对 2.4 的 echo 假工具）：
+实现真工具（相对 2.4 的 echo 假工具）：
 - `query_jobs`：只读 DB 查岗位库，`status` 精确过滤 + `ungreeted=true` 专用过滤
   （打招呼流程的第一步必须先查库存再搜新，§4.2 硬规则）；可选 city/keyword/分页。
 - `get_progress`：今日已投 / 每日额度 / 剩余额度（Agent 自律"额度用完就停"的前提）。
+- `update_setting`：写 settings 配置（write=True 走审批门）。白名单
+  `state.SETTINGS_WHITELIST`（== 手动设置 API 字段集）；敏感键 `state.SENSITIVE_SETTING_KEYS`
+  全模式硬拒（唯一可写路径是人工 /api/settings）；值经 `state.mask_sensitive` 脱敏。
 
 设计要点：
 - **status 机映射**：`agent.state.JobStatus` 是 Agent 岗位状态机单一真源，值直接写/读
@@ -12,23 +15,28 @@
   `interview.llm_client.build_tool_schema` 转 OpenAI tools 声明；执行时 `Model(**kwargs)`
   先校验再查库。**校验失败返回 `{"error": ...}` 结果而非抛异常**——错误作为工具输出
   回灌 plan，LLM 据此自纠（禁止 Agent 编默认值，§4.4）。
+- **敏感键硬拒**：update_setting 对 ai_api_key/wechat_id 无条件拒绝（实现时定的最严解释），
+  日志只记掩码值，返回结果也不回显原始值。
 - **引擎注入**：工具以 factory 闭包绑定注入的 SQLA 引擎（测试用内存库、运行时真实库），
   `_execute_tool` 调 `func(**args)` 时 LLM 参数与 engine 无键冲突。
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import Any, Callable
 
 from pydantic import BaseModel, Field, ValidationError
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.orm import Session as SASession
 
 from agent import state
 from agent.graph import ToolRegistry
 from db import models
 from interview.llm_client import build_tool_schema
+
+logger = logging.getLogger("agent.tools")
 
 # ══════════════════════════════════════════════════════════
 #  工具入参模型（§4.2：工具 schema 全部用 Pydantic 定义）
@@ -52,6 +60,16 @@ class QueryJobsParams(BaseModel):
 
 class GetProgressParams(BaseModel):
     """get_progress 入参（当前无参）。"""
+
+
+class UpdateSettingParams(BaseModel):
+    """update_setting 入参。key 必须在 `agent.state.SETTINGS_WHITELIST`（=手动设置 API 字段集）。"""
+
+    key: str = Field(
+        ...,
+        description="settings 配置键（白名单内；敏感键 ai_api_key/wechat_id 一律拒绝，需人工在 /api/settings 修改）",
+    )
+    value: str = Field("", description="新值（字符串；清空传空串）")
 
 
 # ══════════════════════════════════════════════════════════
@@ -176,6 +194,57 @@ def get_progress_factory(engine) -> Callable[[], dict]:
     return get_progress
 
 
+def update_setting_factory(engine) -> Callable[..., dict]:
+    """构造 `update_setting(**kwargs) -> dict`：写 settings（write=True，走审批门）。
+
+    `key` 必填、`value` 可缺省——Pydantic `UpdateSettingParams(**kwargs)` 先校验（L3），
+    缺 key 返回 `{"error":...}` 而非 TypeError。
+
+    安全边界（spec §3.2）：
+    1. **白名单**：key 不在 `SETTINGS_WHITELIST` → 拒绝（回 `allowed` 清单供 LLM 自纠）。
+    2. **敏感键**：ai_api_key/wechat_id **全模式硬拒**（autonomous 也不放过，实现时定的最严
+       解释；Agent 无路径改敏感键，唯一可写路径是人工 /api/settings）。日志只记掩码。
+    3. **不落原始值**：返回结果回显的值经 `mask_sensitive`，transcript 由 graph 层统一脱敏。
+    """
+
+    def update_setting(**kwargs: Any) -> dict:
+        try:
+            p = UpdateSettingParams(**kwargs)
+        except ValidationError as e:
+            return {"error": "参数校验失败", "message": str(e)}
+        key, value = p.key, p.value
+        if key not in state.SETTINGS_WHITELIST:
+            return {
+                "error": "配置键不在白名单",
+                "message": f"key={key} 不在 Agent 可写设置白名单内（=手动设置 API 的字段集）",
+                "allowed": sorted(state.SETTINGS_WHITELIST),
+            }
+        if key in state.SENSITIVE_SETTING_KEYS:
+            # 敏感键：日志只记键名与掩码占位，绝不回显原始值
+            logger.warning("update_setting 敏感键被拒：key=%s，value 已掩码不回显", key)
+            return {
+                "error": "敏感配置键拒绝",
+                "message": (
+                    f"key={key} 是敏感配置键（{sorted(state.SENSITIVE_SETTING_KEYS)}），"
+                    "Agent 无权修改；请人工在 /api/settings 修改"
+                ),
+                "masked": True,
+            }
+        with SASession(engine) as s, s.begin():
+            if s.get(models.Setting, key) is not None:
+                s.execute(
+                    update(models.Setting)
+                    .where(models.Setting.key == key)
+                    .values(value=value, updated_at=func.current_timestamp())
+                )
+            else:
+                s.execute(models.Setting.__table__.insert().values(key=key, value=value))
+        logger.info("update_setting 已写入：key=%s", key)
+        return {"error": None, "key": key, "value": state.mask_sensitive(value), "updated": True}
+
+    return update_setting
+
+
 # ══════════════════════════════════════════════════════════
 #  只读工具注册表
 # ══════════════════════════════════════════════════════════
@@ -201,10 +270,29 @@ def build_read_tools(engine, registry: ToolRegistry | None = None) -> ToolRegist
     return reg
 
 
+def build_write_tools(engine, registry: ToolRegistry | None = None) -> ToolRegistry:
+    """注册写配置工具到 registry（缺省新建）。write=True → audit 模式过审批门。"""
+    reg = registry or ToolRegistry()
+    reg.register(
+        "update_setting",
+        func=update_setting_factory(engine),
+        description=(
+            "改 settings 配置（写，audit 模式下挂起等确认）。key 必须落在白名单（=手动设置 API 字段集）；"
+            "敏感键 ai_api_key/wechat_id 一律拒绝，请人工在 /api/settings 修改"
+        ),
+        schema=build_tool_schema("update_setting", "改配置（写，白名单 + 敏感键拒绝）", UpdateSettingParams),
+        write=True,
+    )
+    return reg
+
+
 __all__ = [
     "QueryJobsParams",
     "GetProgressParams",
+    "UpdateSettingParams",
     "query_jobs_factory",
     "get_progress_factory",
+    "update_setting_factory",
     "build_read_tools",
+    "build_write_tools",
 ]

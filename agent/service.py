@@ -24,11 +24,12 @@ from db import base as db_base
 
 
 def default_registry(engine=None) -> ToolRegistry:
-    """骨架注册表：echo 假工具（全链路验证）+ 真实只读工具 query_jobs/get_progress（3.1）。
+    """骨架注册表：echo 假工具（全链路验证）+ 只读工具 query_jobs/get_progress（3.1）
+    + 写配置工具 update_setting（3.2）。
 
     Phase 3/4 在此逐个追加真工具（search_jobs / send_greetings ...），写工具置 write=True，
     走审批门。工具 schema 一律 OpenAI 兼容 `tools` 声明（§4.2，Pydantic 参数校验）。
-    `engine` 缺省用真实库（`db_base.get_engine()`）；只读工具以 factory 闭包绑定该引擎。
+    `engine` 缺省用真实库（`db_base.get_engine()`）；工具以 factory 闭包绑定该引擎。
     """
     reg = ToolRegistry()
     reg.register(
@@ -49,9 +50,10 @@ def default_registry(engine=None) -> ToolRegistry:
         },
         write=False,
     )
-    from agent.tools import build_read_tools
+    from agent.tools import build_read_tools, build_write_tools
 
-    return build_read_tools(engine or db_base.get_engine(), reg)
+    eng = engine or db_base.get_engine()
+    return build_write_tools(eng, build_read_tools(eng, reg))
 
 
 def echo_planner_factory(user_input: str):
