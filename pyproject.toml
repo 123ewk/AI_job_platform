@@ -39,7 +39,6 @@ target-version = "py310"
 # 切换数据层时再逐个纳入 lint 范围，避免"一步做两件事"。
 extend-exclude = [
     "boss_firefox.py",
-    "boss_replier.py",
     "boss_company.py",
     "boss_state.py",
     "boss_geo.py",

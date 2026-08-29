@@ -5,14 +5,12 @@ AI 回复生成 —— 调用 DeepSeek API 为 BOSS直聘聊天生成自动回�
 """
 
 import json
-import sys
-from pathlib import Path
 
-# 复用 interview/llm_client.py
-sys.path.insert(0, str(Path(__file__).parent / "interview"))
-from llm_client import llm_chat_deepseek
+from db.backend import get_recent_messages, get_setting
 
-from boss_state import get_recent_messages, get_setting
+# 复用 interview/llm_client.py：以包路径导入，不再朝 sys.path 插 interview/——
+# 否则 interview/db.py 与顶层 db 包同名，会把 import 到的 `db` 劫持成非包，破坏 from db.backend。
+from interview.llm_client import llm_chat_deepseek
 
 SYSTEM_PROMPT = """你是一个求职者开发的AI助手，在BOSS直聘上帮他自动与招聘方沟通。
 
@@ -133,11 +131,10 @@ def generate_reply(
 
     hr_lower = hr_message.strip().lower()
     if hr_lower in ("你好", "您好", "hi", "hello", "嗨", "在吗", "在吗？", "在不在", "在不在？"):
-        company = job_info.get("company", "贵公司")
         title = job_info.get("title", "相关岗位")
         desc_hint = ""
         if job_info.get("description"):
-            desc_hint = f"，看了JD感觉挺对口的"
+            desc_hint = "，看了JD感觉挺对口的"
         return (
             f"您好！看到贵司在招{title}，挺感兴趣的{desc_hint}。PS：正在和你聊的这个AI是我自己开发的，算是我的技术名片～",
             "low",
@@ -205,18 +202,12 @@ def generate_reply(
 def _read_jd_summary(url_or_uid: str, max_chars: int = 500) -> str:
     """从数据库读岗位 JD 摘要；如果读不到则返回空串。"""
     try:
-        from boss_state import get_db
+        # 走高层 API（后端无关），避免直接 get_db 时存量 cursor 与 SA Connection 语义不一致
+        from db.backend import get_application_by_url
 
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT description FROM applications WHERE url=? OR job_id=? LIMIT 1",
-            (url_or_uid, url_or_uid),
-        )
-        row = cur.fetchone()
-        conn.close()
-        if row and row[0]:
-            return row[0][:max_chars]
+        app = get_application_by_url(url_or_uid)
+        if app and app.get("description"):
+            return app["description"][:max_chars]
     except Exception:
         pass
     return ""
@@ -303,7 +294,7 @@ def generate_smart_greeting(
     )
     if "{job_title}" in fallback or "{company}" in fallback:
         fallback = f"您好，我对贵公司的{job_title or '相关岗位'}岗位很感兴趣，可以详细了解一下吗？"
-    print(f"  ↩️ 智能生成失败，已回退到固定模板")
+    print("  ↩️ 智能生成失败，已回退到固定模板")
     return fallback
 
 
