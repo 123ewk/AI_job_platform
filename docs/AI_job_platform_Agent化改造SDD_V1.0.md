@@ -247,7 +247,7 @@ class FlowLock:          # agent/flow_lock.py（新增）
 
 ### Phase 2 · Agent 骨架（不接真工具，全部可用假工具测）
 
-- **2.1 Agent 4 张表**：agent_sessions / agent_steps / agent_tasks / approvals 模型 + Alembic 迁移 + 状态机常量。
+- **2.1 Agent 4 张表** ✅ 已完成（2026-08-29）：`agent/state.py` 状态机常量单一真源覆盖 6 域（ExecutionMode/SessionStatus/TaskStatus/ApprovalStatus/StepStatus + StepKind），TaskStatus 含 §4.5 合法转换图 + `can_transition`/`is_terminal` 校验助手。模型与 Alembic 迁移已于 1.1 落地（初始迁移 `9f808e900204` 含 4 表），本步以 8 个单测钉死**整件对齐**：①5 个常量与 `db/models.py` 列默认值逐一对齐（漂移即红）；②§4.5 状态机转换合法性（终态不可再迁/不可回滚）；③6 个状态域声明集非空无重复；④4 张表内存 SQLite 全生命周期读写回读一致；真实库 `.boss_profile/boss_state_sa.db` 已具 4 表。
 - **2.2 LLM function-calling 扩展**：`llm_client` 新增带 `tools` 参数的调用函数（OpenAI 兼容格式，DeepSeek 支持），旧函数不动；单测 mock httpx。
 - **2.3 决策图（LangGraph）**：引入依赖 `langgraph` + `langgraph-checkpoint-sqlite`；`agent/graph.py` 按 §4.1 建 StateGraph（plan→approval_gate(interrupt)→execute_tool→回环）+ `SqliteSaver` checkpoint + `recursion_limit` 熔断 + transcript 落库；用一个 `echo` 假工具写契约测试（决策→执行→汇报→落库全链路，mock LLM）。
 - **2.4 对话 API**：`POST /api/agent/chat`（同步问答回合）+ WebSocket `/ws/agent`（步骤进度推送）；curl 冒烟。
@@ -299,6 +299,7 @@ class FlowLock:          # agent/flow_lock.py（新增）
 
 ## 11. 变更记录
 
+- 2026-08-29 V1.2.7（随 Step 2.1 提交）：①新增 `agent/state.py` Agent 状态机常量**单一真源**覆盖 6 域：ExecutionMode（audit 默认/autonomous）、SessionStatus（active/completed/aborted）、TaskStatus（§4.5 状态机 pending→running→completed|failed|interrupted|stopped，含合法转换图 TRANSITIONS + can_transition/is_terminal 校验助手）、ApprovalStatus（pending/approved/rejected）、StepStatus（done/failed）、StepKind（plan/execute/approval/report/ask_user），DB 列无 CHECK，合法性由本模块应用层把关。②单测 `tests/test_agent_state.py`（8 个）钉死整件对齐：5 个常量与 db/models.py 列默认值逐一对齐（漂移即红）、§4.5 状态机转换合法性（终态不可回滚/不可再迁）、6 状态域声明集非空无重复、4 张 agent 表内存 SQLite 全生命周期读写回读一致。③说明：4 张表模型+Alembic 迁移已于 1.1 落地（初始迁移 `9f808e900204` 含 4 表），本步补状态机常量与整件对齐；真实库 `.boss_profile/boss_state_sa.db` 已具 4 张 agent 表。
 - 2026-08-29 V1.2.6（随 Step 1.4 提交）：①新增 `db/migrate_legacy.py` 幂等迁移 CLI——存量 `boss_state.db` → SQLAlchemy 库 `boss_state_sa.db`，逐行保留主键（FK 与 dashboard 按 id 引用在迁移前后一致），`INSERT OR IGNORE` 幂等（重复运行 no-op），源库只读打开，目标 schema 缺失用 `Base.metadata.create_all` 自建（与 alembic 初始迁移同 DDL）；支持 `--dry-run`/`--schema-only`。②单测 `tests/test_migrate_legacy.py` 三条验收线：数据保全（逐行逐列相等，按列名比对以忽略列序差异）、dashboard 口径一致（只读函数快照新旧相等）、幂等（二次/三次无新写、预演零写入、缺源库报错）。③真实数据冒烟：507 岗位/4 会话/12 消息/25 设置/1 日统计共 549 行迁入，重复运行 0 新写；12 项 dashboard 聚合 legacy 与迁后 SA 逐项相等（SMOKE PASS）。
 - 2026-08-29 V1.2.5（随 Step 1.3 提交）：①新建 `db/backend.py` DB_BACKEND 薄转发开关（legacy 回退存量 / 其余走 SA 适配层）；②boss_app/boss_automation/boss_replier/boss_company 逐文件切换 `from db.backend import` 并纳入 ruff lint，各一个 commit；③修复 interview sys.path 毒（boss_replier 改包路径 import interview.llm_client）、boss_app 缺 pause 导入、poll_conversation_list hr_company/hr_title 未赋值、CITY_CODE 重复键及多种存量 lint 债；④补回 boss_company 两个被删数据函数（list_companies_by_position_count/list_jobs_by_company）入适配层 + 单测；⑤boss_replier _read_jd_summary 改走高维 API。
 - 2026-08-28 V1.2.3（随 Step 1.1 提交）：①建 `db/` 包（SQLAlchemy 2.0 声明式 + 引擎工厂）+ Alembic 初始迁移（11 表），DB 文件默认 `.boss_profile/boss_state_sa.db`（与存量 `boss_state.db` 分开，Step 1.4 迁移）；②`alembic/env.py` 不读 ini 的 url，改用 `db.base.get_engine()` 统一来源。③Agent 4 新表本轮建模，状态机常量留待 Step 2.1。
