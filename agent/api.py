@@ -171,6 +171,30 @@ async def chat(req: ChatRequest, http_request: Request) -> ChatResponse:
     return ChatResponse(**result)
 
 
+@agent_router.post("/api/agent/tasks/{task_id}/stop")
+async def stop_agent_task(task_id: int, http_request: Request) -> dict:
+    """Step 4.4 用户手动刹车：给后台任务打停止标志（§4.5 刹车柄只在用户手里）。
+
+    **不是 Agent 工具**——dashboard 任务卡片的"停止"按钮调用此端点；Agent 对话里不提供
+    叫停自己后台任务的能力。执行器在**岗位与岗位之间**检查停止标志，当前岗位完整结束后
+    任务进入 `stopped` 终态并广播 `agent_task_done`（WS，spec §4.5）——绝不打断正在
+    发送的岗位，避免"发送结果未知"状态。
+
+    返回 `accepted=true`（已请求停止，下一步看 WS 终态）/ `false`（任务不存在或已结束）。
+    """
+    ex = _get_executor(http_request)
+    accepted = ex.submit_stop(task_id)
+    return {
+        "task_id": task_id,
+        "accepted": accepted,
+        "message": (
+            "已请求停止：当前岗位发完即停（终态 stopped，见 /ws/agent 广播）"
+            if accepted
+            else "任务不存在或已结束，无需停止"
+        ),
+    }
+
+
 @agent_router.post("/api/agent/applications/{application_id}/resolve-unknown")
 async def resolve_unknown(application_id: int, body: ResolveUnknownRequest, http_request: Request) -> dict:
     """Step 4.3 人工确认门：确认崩溃隔离的"结果未知"岗位（sent 与否）→ 决定可不可重发。

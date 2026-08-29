@@ -807,6 +807,9 @@ def send_greetings_factory(
                 # 定位"发送结果未知"岗位做隔离，防止续投重复打招呼。
                 "job_urls": [j["job_url"] for j in jobs],
             },
+            # Step 4.4 连续失败熔断联动：单家 HR 瞬败（如页面偶发错误）不拖垮整批，但
+            # 连续 3 家崩（浏览器可能卡死）即熔断停止剩余单位，防止空转整个批次。
+            consecutive_fail_threshold=3,
         )
         return {
             "error": None,

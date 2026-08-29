@@ -97,8 +97,15 @@ class TaskExecutor:
         unit_fn: Callable[[int], Any],
         params: dict | None = None,
         session_id: int | None = None,
+        consecutive_fail_threshold: int | None = None,
     ) -> int:
-        """建一条后台任务（status=pending）并起协程跑完，返回 `agent_tasks.id`。"""
+        """建一条后台任务（status=pending）并起协程跑完，返回 `agent_tasks.id`。
+
+        `consecutive_fail_threshold`（Step 4.4 连续失败熔断，默认 None=既有 fail-fast）：
+        - `None`：任一单位抛异常 → 整任务立即 `failed`（4.1 行为不变）；
+        - `N≥2`：容忍 N-1 个**连续**单位异常（吞掉、岗位保持未发可重试，成功即清零），
+          第 N 个连续失败才熔断停止剩余单位（防浏览器卡死时空转整个批次）。
+        """
         engine = self._get_engine()
         with SASession(engine) as s:
             row = models.AgentTask(
@@ -117,7 +124,13 @@ class TaskExecutor:
         ev = threading.Event()
         with self._stop_lock:
             self._stop[task_id] = ev
-        self._tasks[task_id] = self._schedule(task_id, kind=kind, total=total, unit_fn=unit_fn)
+        self._tasks[task_id] = self._schedule(
+            task_id,
+            kind=kind,
+            total=total,
+            unit_fn=unit_fn,
+            consecutive_fail_threshold=consecutive_fail_threshold,
+        )
         return task_id
 
     def _ensure_loop(self) -> asyncio.AbstractEventLoop:
@@ -134,7 +147,10 @@ class TaskExecutor:
                 self._loop = loop
         return self._loop
 
-    def _schedule(self, task_id: int, *, kind: str, total: int, unit_fn: Callable) -> Any:
+    def _schedule(
+        self, task_id: int, *, kind: str, total: int, unit_fn: Callable,
+        consecutive_fail_threshold: int | None = None,
+    ) -> Any:
         """把 `_run` 协程调度起来，返回可 join 的句柄。
 
         条件双路径：
@@ -151,10 +167,17 @@ class TaskExecutor:
         except RuntimeError:
             caller = None
         if caller is not None:
-            return caller.create_task(self._run(task_id, kind=kind, total=total, unit_fn=unit_fn))
+            return caller.create_task(
+                self._run(task_id, kind=kind, total=total, unit_fn=unit_fn,
+                          consecutive_fail_threshold=consecutive_fail_threshold)
+            )
         loop = self._ensure_loop()
         return asyncio.wrap_future(
-            asyncio.run_coroutine_threadsafe(self._run(task_id, kind=kind, total=total, unit_fn=unit_fn), loop),
+            asyncio.run_coroutine_threadsafe(
+                self._run(task_id, kind=kind, total=total, unit_fn=unit_fn,
+                          consecutive_fail_threshold=consecutive_fail_threshold),
+                loop,
+            ),
             loop=loop,
         )
 
@@ -171,7 +194,10 @@ class TaskExecutor:
             ev.set()
             return True
 
-    async def _run(self, task_id: int, *, kind: str, total: int, unit_fn: Callable) -> None:
+    async def _run(
+        self, task_id: int, *, kind: str, total: int, unit_fn: Callable,
+        consecutive_fail_threshold: int | None = None,
+    ) -> None:
         engine = self._get_engine()
         # pending → running；非 pending 则放弃（例如已被别处抢跑）
         with SASession(engine) as s:
@@ -185,19 +211,44 @@ class TaskExecutor:
         status = TaskStatus.COMPLETED
         error: str | None = None
         done = 0
+        consecutive_fails = 0
         try:
             for i in range(1, total + 1):
                 # 单位之间检查停止标志：当前单位完整结束后才允许刹车
                 if self._is_stop_requested(task_id):
                     status = TaskStatus.STOPPED
                     break
-                if inspect.iscoroutinefunction(unit_fn):
-                    await unit_fn(i)
-                else:
-                    await asyncio.to_thread(unit_fn, i)
+                try:
+                    if inspect.iscoroutinefunction(unit_fn):
+                        await unit_fn(i)
+                    else:
+                        await asyncio.to_thread(unit_fn, i)
+                except Exception as exc:  # noqa: BLE001 —— 单位失败：fail-fast 或 连续失败熔断
+                    last_exc = exc
+                    consecutive_fails += 1
+                    if consecutive_fail_threshold is None or consecutive_fails >= consecutive_fail_threshold:
+                        # fail-fast（默认）或 达熔断阈值 → 整任务 failed，剩余单位不再跑
+                        status = TaskStatus.FAILED
+                        if consecutive_fail_threshold is None:
+                            error = str(last_exc)
+                            logger.warning("agent_task=%s 单位 %s 失败 → failed（fail-fast）", task_id, i)
+                        else:
+                            error = (
+                                f"连续失败熔断：连续 {consecutive_fails} 个岗位发送失败，"
+                                f"已停止剩余单位（末因 {last_exc}）"
+                            )
+                            logger.warning("agent_task=%s 连续失败熔断（%s/%s）", task_id, consecutive_fails, consecutive_fail_threshold)
+                        break
+                    # 未达阈值：吞掉本单失败（岗位保持未发可重试），下一位继续，成功即清零
+                    logger.warning(
+                        "agent_task=%s 单位 %s 失败，跳过待下一位（连续失败 %s/%s，成功即重置）：%s",
+                        task_id, i, consecutive_fails, consecutive_fail_threshold, last_exc,
+                    )
+                    continue
+                consecutive_fails = 0  # 本单位成功 → 连续失败计数清零
                 done = i
                 self._persist_and_broadcast_progress(engine, task_id, kind, total, done)
-        except Exception as exc:  # noqa: BLE001 —— 单岗位失败记 status=failed，不打死执行器
+        except Exception as exc:  # noqa: BLE001 —— 非单位异常（如进度落库失败）记 failed，不打死执行器
             status = TaskStatus.FAILED
             error = str(exc)
             logger.exception("agent_task=%s 单位执行失败", task_id)

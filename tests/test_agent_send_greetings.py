@@ -86,7 +86,7 @@ class _FakeExecutor:
         self.submits = []
         self.captured_unit = None
 
-    def submit(self, *, kind, total, unit_fn, params=None, session_id=None):
+    def submit(self, *, kind, total, unit_fn, params=None, session_id=None, consecutive_fail_threshold=None):
         self.submits.append({"kind": kind, "total": total, "params": params})
         self.captured_unit = unit_fn
         return 99

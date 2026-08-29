@@ -279,7 +279,7 @@ def test_send_greetings_params_record_job_urls_for_recovery():
         def __init__(self):
             self.submits = []
 
-        def submit(self, *, kind, total, unit_fn, params=None, session_id=None):
+        def submit(self, *, kind, total, unit_fn, params=None, session_id=None, consecutive_fail_threshold=None):
             self.submits.append(params)
             return 1
 
