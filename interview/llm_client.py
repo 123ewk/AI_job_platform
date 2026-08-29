@@ -132,6 +132,77 @@ def llm_chat_deepseek(messages: list, system_prompt: Optional[str] = None, tempe
     return data["choices"][0]["message"]["content"]
 
 
+def build_tool_schema(
+    name: str,
+    description: str,
+    parameters_model: Optional[type] = None,
+) -> dict:
+    """把（可选）Pydantic 模型转成 OpenAI function 工具的 JSON-schema 声明（§4.2）。
+
+    工具 schema 全部用 Pydantic 定义——LLM 只能调用注册过的工具、传校验过的参数
+    （安全边界 L3）。`parameters_model` 是 Pydantic v2 model 类，缺省给空 properties
+    （无参工具）。返回格式兼容 OpenAI `tools` 数组元素，DeepSeek 同样支持。
+    """
+    parameters = {"type": "object", "properties": {}}
+    if parameters_model is not None:
+        parameters = parameters_model.model_json_schema()
+
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": parameters,
+        },
+    }
+
+
+def llm_chat_functions(
+    messages: list,
+    tools: list,
+    system_prompt: Optional[str] = None,
+    temperature: float = 0.3,
+    tool_choice: str = "auto",
+) -> dict:
+    """调用 AI API 做 function-calling（OpenAI 兼容 `tools` 格式，DeepSeek 支持）。
+
+    存量 `llm_chat_deepseek`（纯文本问答）不动；本函数专供 Agent 决策循环
+    （Step 2.3 graph.py）让 LLM 在「调工具 / 反问 / 宣布完成」之间做选择。
+
+    返回 assistant message dict（OpenAI 结构原样）：
+        {"role": "assistant", "content": str|None, "tool_calls": [...]|None}
+    调用方解析 `tool_calls[].function`（name + arguments JSON）走 ToolRegistry。
+    """
+    cfg = _load_ai_config()
+    if not cfg["api_key"]:
+        raise RuntimeError("AI API Key未配置，请在设置页配置")
+
+    if system_prompt:
+        messages = [{"role": "system", "content": system_prompt}] + messages
+
+    payload = {
+        "model": cfg["model"],
+        "messages": messages,
+        "temperature": temperature,
+        "stream": False,
+        "tools": tools,
+        "tool_choice": tool_choice,
+    }
+
+    resp = httpx.post(
+        f"{cfg['base_url']}/chat/completions",
+        json=payload,
+        headers={
+            "Authorization": f"Bearer {cfg['api_key']}",
+            "Content-Type": "application/json",
+        },
+        timeout=120,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return data["choices"][0]["message"]
+
+
 def parse_json_from_llm(text: str) -> Optional[dict]:
     """从LLM返回文本中提取JSON"""
     json_match = re.search(r"\{.*\}", text, re.DOTALL)
