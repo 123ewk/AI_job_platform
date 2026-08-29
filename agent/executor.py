@@ -3,9 +3,12 @@
 在既有功能下补一块"能后台跑、能看进度、能停"的扇骨，为 send_greetings（4.2）落地
 做准备：
 
-- **asyncio 执行器**：`TaskExecutor.submit()` 用 `asyncio.create_task` 起一个后台协程，
-  驱动 `agent_tasks` 状态机 `pending → running → completed|failed|stopped`
-  （§4.5，全部经 `state.can_transition` 合法路径）；
+- **asyncio 执行器**：`TaskExecutor.submit()` 把 `self._run` 协程调度到执行器**自有的后台
+  事件循环线程**（§4.2 起），驱动 `agent_tasks` 状态机 `pending → running → completed|failed|stopped`
+  （§4.5，全部经 `state.can_transition` 合法路径）。执行器自带循环线程（懒启动 daemon），
+  `submit` 用 `asyncio.run_coroutine_threadsafe` 交给它——**可从任意线程提交**，包括决策图
+  graph 的 `asyncio.to_thread` worker 线程（那里没有运行中的事件循环，`create_task` 无法用），
+  这正是 send_greetings（4.2）后台任务提交的执行路径；
 - **进度事件**：每完成一个"岗位"（一个单位），`progress_done` 加一并广播一次
   `agent_task_progress`（复用 AgentHub 通道，spec §4.5 复用 broadcast_ws 思路）——
   对话里 Agent 据此能答"后台任务还剩 N 个"；
@@ -17,10 +20,13 @@ Step 4.1 是骨架：单位函数 `unit_fn` 由调用方注入，本步用假长
 真实 send_greetings 的浏览器单位在 Step 4.2 用 `_run_pw` 单线程池接入。中断恢复
 （重启后 running→interrupted）与 API/dashboard 停止按钮属 Step 4.3/4.4。
 
-线程模型：执行器本体是异步协程，跑在事件循环线程；单位函数若为协程函数直接 `await`，
-若为同步函数则 `asyncio.to_thread` 丢到线程池（与 pw 单线程池思想一致，不阻塞事件循环
-——后台跑真浏览器操作的前提）。DB 状态写为本地 SQLite 微秒级操作，直接在循环内执行。
-`submit_stop` 可能来自其它线程，用 `threading.Event` + 小锁保护，绝不在循环里阻塞等待。
+线程模型：执行器本体是异步协程，跑在**自己专用的后台事件循环线程**（`_ensure_loop` 懒启动
+daemon 线程 + `run_forever`），与调用方线程解耦——决策图在 `asyncio.to_thread` worker 线程、
+无运行中循环也能 `submit`（`run_coroutine_threadsafe` 跨线程安全调度）；单位函数若为协程
+直接 `await`，若为同步函数 `asyncio.to_thread` 丢线程池（与 pw 单线程池思想一致，不阻塞
+事件循环——后台跑真浏览器操作的前提）。DB 状态写为本地 SQLite 微秒级操作，在循环线程内
+直接执行。`submit_stop` 可能来自其它线程，用 `threading.Event` + 小锁保护，绝不在循环里
+阻塞等待。
 """
 
 from __future__ import annotations
@@ -63,8 +69,12 @@ class TaskExecutor:
         # task_id -> 停止标志（threading.Event，submit_stop 跨线程翻转，锁保护防并发）
         self._stop: dict[int, threading.Event] = {}
         self._stop_lock = threading.Lock()
-        # task_id -> 运行中的 asyncio.Task（测试 join 用）
-        self._tasks: dict[int, asyncio.Task] = {}
+        # 执行器自有的后台事件循环线程（懒启动，§4.2 起可从无循环的 worker 线程 submit）
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop_lock = threading.Lock()
+        # task_id -> 运行中任务的句柄（`run_coroutine_threadsafe` 的 concurrent future，
+        # 调用线程有循环时 `wrap_future` 成 asyncio.Future 供测试 join）
+        self._tasks: dict[int, Any] = {}
 
     def _get_engine(self):
         return self._engine or db_base.get_engine()
@@ -97,10 +107,46 @@ class TaskExecutor:
         ev = threading.Event()
         with self._stop_lock:
             self._stop[task_id] = ev
-        self._tasks[task_id] = asyncio.create_task(
-            self._run(task_id, kind=kind, total=total, unit_fn=unit_fn)
-        )
+        self._tasks[task_id] = self._schedule(task_id, kind=kind, total=total, unit_fn=unit_fn)
         return task_id
+
+    def _ensure_loop(self) -> asyncio.AbstractEventLoop:
+        """懒启动执行器后台事件循环线程（daemon，随进程终结）。
+
+        执行器自持循环：submit 可从任意线程调度（`run_coroutine_threadsafe` 跨线程安全），
+        不再依赖调用方线程有没有运行中的事件循环——graph worker（决策图在
+        `asyncio.to_thread` 里）没有循环也能提交后台任务。
+        """
+        with self._loop_lock:
+            if self._loop is None or self._loop.is_closed():
+                loop = asyncio.new_event_loop()
+                threading.Thread(target=loop.run_forever, name="agent-executor", daemon=True).start()
+                self._loop = loop
+        return self._loop
+
+    def _schedule(self, task_id: int, *, kind: str, total: int, unit_fn: Callable) -> Any:
+        """把 `_run` 协程调度起来，返回可 join 的句柄。
+
+        条件双路径：
+        - 调用线程**有**运行中的事件循环（测试的 `asyncio.run(scenario())`）→ 直接在该循环
+          `create_task`，与 4.1 行为一致（任务跑在调用方循环线程，同步原语如 asyncio.Event
+          均在同一条线程，无跨循环）；
+        - 调用线程**无**循环（决策图 graph 的 `asyncio.to_thread` worker，send_greetings 提交
+          后台任务的真实路径）→ 经 `run_coroutine_threadsafe` 调度到执行器自有后台循环线程，
+          `wrap_future(loop=后台循环)` 返回该循环上的 asyncio.Future（本轮无人 join，`_run` 的
+          finally 会 self._tasks.pop）。
+        """
+        try:
+            caller = asyncio.get_running_loop()
+        except RuntimeError:
+            caller = None
+        if caller is not None:
+            return caller.create_task(self._run(task_id, kind=kind, total=total, unit_fn=unit_fn))
+        loop = self._ensure_loop()
+        return asyncio.wrap_future(
+            asyncio.run_coroutine_threadsafe(self._run(task_id, kind=kind, total=total, unit_fn=unit_fn), loop),
+            loop=loop,
+        )
 
     def submit_stop(self, task_id: int) -> bool:
         """给任务打停止标志（§4.5 用户手动停止）。已知任务返回 True，未知返回 False。

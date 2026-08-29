@@ -23,14 +23,22 @@ from agent.graph import DEFAULT_RECURSION_LIMIT, ToolRegistry, build_agent_graph
 from db import base as db_base
 
 
-def default_registry(engine=None, *, lock=None, get_automation=None, pw_runner=None) -> ToolRegistry:
+def _runtime_paused() -> bool:
+    """运行时用户暂停标志（懒加载 boss_app.monitor_paused，避免 registry 构建期 import boss_app）。"""
+    from boss_app import monitor_paused  # noqa: PLC0415
+
+    return bool(monitor_paused)
+
+
+def default_registry(engine=None, *, lock=None, get_automation=None, pw_runner=None, executor=None) -> ToolRegistry:
     """骨架注册表：echo 假工具（全链路验证）+ 只读 query_jobs/get_progress（3.1）
-    + 写配置 update_setting（3.2）+ 浏览器 search_jobs / 会话概览 get_conversations_summary（3.3）。
+    + 写配置 update_setting（3.2）+ 浏览器 search_jobs / 会话概览 get_conversations_summary（3.3）
+    + 后台打招呼 send_greetings（4.2，write=True）。
 
     写工具置 write=True 走审批门；search_jobs 是"读浏览器"工具（write=False，audit 直放，
     持有 FlowLock 互斥）。工具 schema 一律 OpenAI 兼容 `tools` 声明（§4.2，Pydantic 参数校验）。
     `engine` 缺省用真实库（`db_base.get_engine()`）；工具以 factory 闭包绑定该引擎。
-    `lock/get_automation/pw_runner` 透传给 search_jobs_factory（测试注入假浏览器）。
+    `lock/get_automation/pw_runner/executor` 透传给各 factory（测试注入假浏览器 / 假执行器）。
     """
     reg = ToolRegistry()
     reg.register(
@@ -51,12 +59,16 @@ def default_registry(engine=None, *, lock=None, get_automation=None, pw_runner=N
         },
         write=False,
     )
-    from agent.tools import build_browser_tools, build_read_tools, build_write_tools
+    from agent.tools import build_browser_tools, build_read_tools, build_send_tools, build_write_tools
 
     eng = engine or db_base.get_engine()
     reg = build_read_tools(eng, reg)
     reg = build_write_tools(eng, reg)
-    return build_browser_tools(eng, reg, lock=lock, get_automation=get_automation, pw_runner=pw_runner)
+    reg = build_browser_tools(eng, reg, lock=lock, get_automation=get_automation, pw_runner=pw_runner)
+    return build_send_tools(
+        eng, reg, executor=executor, lock=lock, get_automation=get_automation, pw_runner=pw_runner,
+        paused=_runtime_paused,
+    )
 
 
 def echo_planner_factory(user_input: str):

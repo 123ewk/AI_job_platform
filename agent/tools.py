@@ -33,7 +33,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Callable
 
 from pydantic import BaseModel, Field, ValidationError
@@ -96,6 +96,15 @@ class ConversationsSummaryParams(BaseModel):
     limit: int = Field(10, ge=1, le=50, description="返回会话条数上限（1-50）")
     only_unread: bool | None = Field(None, description="只统计有未读的会话（可选）")
     hr_name: str | None = Field(None, description="按 HR 姓名精确过滤（可选）")
+
+
+class SendGreetingsParams(BaseModel):
+    """send_greetings 入参（§4.2：打招呼后台长任务）。
+
+    一次最多给 `max_count` 个岗位发招呼语，取 `min(max_count, 今日剩余额度)`。
+    """
+
+    max_count: int = Field(10, ge=1, le=50, description="本次最多打招呼岗位数（1-50，实际取 min(max_count, 今日余量)）")
 
 
 # ══════════════════════════════════════════════════════════
@@ -596,18 +605,259 @@ def build_browser_tools(
     return reg
 
 
+# ══════════════════════════════════════════════════════════
+#  send_greetings 后台打招呼任务（Step 4.2，§4.2 写路径最高风险区）
+# ══════════════════════════════════════════════════════════
+
+
+def _application_job_row(r: Any) -> dict:
+    """Application ORM 行 → 打招呼单位用的 job dict（字段名对齐 apply_batch 新 API）。"""
+    return {
+        "id": r.id,
+        "job_url": r.job_url,
+        "job_title": r.job_title,
+        "title": r.job_title,
+        "company": r.company,
+        "company_id": r.company_id,
+        "hr_active_days": r.hr_active_days,
+        "hr_active_label": r.hr_active_label,
+        "description": r.description,
+        "city": r.city,
+    }
+
+
+def _resolve_greeting(engine, jobs: list[dict]) -> str:
+    """resolve 一次招呼语供整批复用（与 apply_batch 头部同款逻辑：模板优先，smart 走 LLM）。
+
+    只 resolve 一次，避免 per-unit 反复 LLM 生成（apply_batch 自身"第一条生成、后续复用"）
+    的思路；传入单位后 apply_batch 不再生成。沿用既有 setting 键 + `generate_greeting`（不重写）。
+    """
+    template = _get_setting_value(engine, "greeting_template", "")
+    if template:
+        return template
+    first = jobs[0]
+    title = (first.get("job_title") or first.get("title") or "相关岗位")
+    company = (first.get("company") or "贵公司")
+    jd_text = first.get("description") or ""
+    style = _get_setting_value(engine, "ai_reply_style", "professional")
+    if _get_setting_value(engine, "greeting_mode", "template") == "smart":
+        from boss_replier import generate_greeting  # noqa: PLC0415  既有 LLM 生成，不重写
+
+        return generate_greeting(title, company, style=style, jd_text=jd_text, smart=True)
+    return "您好，我对贵公司的{job_title}岗位很感兴趣，请问可以详细了解一下吗？"
+
+
+def _mark_greeted(engine, job_url: str, greeting: str) -> None:
+    """写库：apply_batch 成功后置 Agent 侧 'greeted' + 招呼语 + 时间戳（§4.2 '先写库再发下一个'）。
+
+    apply_batch 内部会把 record 置 'applied'；Agent 侧再补 'greeted' 以便 query_jobs(ungreeted)
+    排除已打招呼集，且与 dashboard 共享同一 applications.status 列。
+    """
+    with SASession(engine) as s:
+        row = s.execute(
+            select(models.Application).where(models.Application.job_url == job_url)
+        ).scalar_one_or_none()
+        if row is not None:
+            row.status = state.JobStatus.GREETED
+            if greeting:
+                row.greeting_text = greeting
+            row.greeting_sent_at = datetime.now()
+            s.commit()
+
+
+def build_greeting_unit(
+    engine,
+    jobs: list[dict],
+    greeting: str,
+    *,
+    lock: FlowLock | None = None,
+    get_automation: Callable[[], Any] | None = None,
+    pw_runner: Callable[..., Any] | None = None,
+) -> Callable[[int], dict]:
+    """构造打招呼单位函数 `unit(i)`（i 从 1 开始，与 executor 单位下标一致），供后台任务驱动。
+
+    每个单位 = 一个岗位的一次打招呼，**逐岗位"先写库再发下一个"**：
+    1. 持有 FlowLock（§4.6，浏览器互斥，chat_monitor_loop 被占时跳本轮让路）→ 包既有
+       `apply_batch` 跑单岗位（日限 / 公司去重 / HR 活跃过滤**全部沿用其内部逻辑，不重写**）；
+    2. 成功后 `_mark_greeted` 写库（置 greeted + 招呼语 + 时间戳）；
+    再由 executor 在单位之间检查停止标志并在进入下一单位前落 progress_done——结束当前 DB 语义
+    才可见"发下一个"。
+    """
+    flow = lock if lock is not None else default_flow_lock
+    loader = get_automation or _default_get_automation
+    runner = pw_runner or _default_pw_runner
+
+    def _unit(i: int) -> dict:
+        job = jobs[i - 1]
+        url = job["job_url"]
+        owner = f"agent:send_greetings:{(url or 'job')[-24:]}"
+        # §4.6：单位内拿锁（阻塞排队），HR 监控轮询非阻塞让路
+        if not flow.acquire(owner, blocking=True):
+            return {"error": "浏览器忙", "message": "浏览器互斥锁被占用（排队超时）", "job_url": url}
+        try:
+            automation = loader()
+            if automation is None:
+                return {"error": "浏览器未启动", "message": "请先在设置页启动浏览器", "job_url": url}
+            job_dict = {
+                "url": url,
+                "title": job.get("title") or job.get("job_title") or "",
+                "company": job.get("company") or "",
+                "company_id": job.get("company_id"),
+                "hr_active_days": job.get("hr_active_days"),
+                "hr_active_label": job.get("hr_active_label", ""),
+                "description": job.get("description") or "",
+            }
+            res = runner(automation.apply_batch, jobs=[job_dict], greeting_template=greeting) or []
+            r = res[0] if res else {"success": False, "message": "apply_batch 无返回"}
+            if r.get("success"):
+                _mark_greeted(engine, url, greeting)
+            return {**r, "job_url": url}
+        finally:
+            flow.release()
+
+    return _unit
+
+
+def _default_executor() -> Any:
+    """执行器缺省解析：桥到 boss_app 的 app.state.agent_executor（api._get_executor），
+    进度/终态经其 broadcast 接到 AgentHub → /ws/agent 广播。懒加载避免循环导入。"""
+    import types
+
+    from agent.api import _get_executor  # noqa: PLC0415
+    from boss_app import app  # noqa: PLC0415
+
+    return _get_executor(types.SimpleNamespace(app=app))
+
+
+def _default_paused() -> bool:
+    """用户暂停标志缺省解析（懒加载 boss_app.monitor_paused；测试注入 paused=False 则不碰）。"""
+    from boss_app import monitor_paused  # noqa: PLC0415
+
+    return bool(monitor_paused)
+
+
+def send_greetings_factory(
+    engine,
+    *,
+    executor=None,
+    lock: FlowLock | None = None,
+    get_automation: Callable[[], Any] | None = None,
+    pw_runner: Callable[..., Any] | None = None,
+    paused: Callable[[], bool] | None = None,
+) -> Callable[..., dict]:
+    """构造 `send_greetings(**kwargs) -> dict`：提交一个后台打招呼长任务（write=True 走审批门）。
+
+    工具本体**不碰浏览器、不阻塞对话**——只做三件事就返回 task_id：
+    1. L3 校验 + 尊重用户暂停（§4.6） + 今日额度（沿用 get_progress 的
+       `min(daily_apply_limit, MAX_APPLY_PER_DAY)` 口径）；
+    2. 查 ungreeted（status∈GREETABLE）库存，取 `min(max_count, 剩余额度)`；
+    3. `executor.submit(kind="send_greetings", ...)` 起后台任务，返回 task_id + 计数。
+
+    后台每个单位由 `build_greeting_unit` 驱动（包既有 apply_batch + 逐岗位先写库再发下一个）。
+    `executor` / `lock` / `get_automation` / `pw_runner` / `paused` 均可注入（测试注入假件）。
+    """
+    flow = lock if lock is not None else default_flow_lock
+    loader = get_automation or _default_get_automation
+    runner = pw_runner or _default_pw_runner
+    is_paused = paused if paused is not None else _default_paused
+
+    def send_greetings(**kwargs: Any) -> dict:
+        try:
+            p = SendGreetingsParams(**kwargs)
+        except ValidationError as e:
+            return {"error": "参数校验失败", "message": str(e)}
+
+        if is_paused():
+            return {"error": "监控已暂停", "message": "用户已暂停监控，请恢复后再打招呼"}
+
+        progress = get_progress_factory(engine)()
+        remaining = progress.get("remaining", 0) or 0
+        if remaining <= 0:
+            return {
+                "error": "今日额度已用完",
+                "message": f"今日已投 {progress.get('today_applied', 0)}，无剩余额度",
+            }
+        cap = min(p.max_count, remaining)
+
+        with SASession(engine) as s:
+            rows = (
+                s.execute(
+                    select(models.Application)
+                    .where(models.Application.status.in_(sorted(state.JobStatus.GREETABLE)))
+                    .order_by(models.Application.updated_at.desc())
+                    .limit(cap)
+                )
+                .scalars()
+                .all()
+            )
+            jobs = [_application_job_row(r) for r in rows]
+        if not jobs:
+            return {"error": "没有可打招呼的岗位", "message": "仓库里没有未打招呼（pending/discovered）的岗位"}
+
+        greeting = _resolve_greeting(engine, jobs)
+        ex = executor if executor is not None else _default_executor()
+        task_id = ex.submit(
+            kind="send_greetings",
+            total=len(jobs),
+            unit_fn=build_greeting_unit(engine, jobs, greeting, lock=flow, get_automation=loader, pw_runner=runner),
+            params={"count": len(jobs), "greeting": greeting},
+        )
+        return {
+            "error": None,
+            "task_id": task_id,
+            "count": len(jobs),
+            "remaining": remaining,
+            "daily_limit": progress.get("daily_limit"),
+            "effective_limit": progress.get("effective_limit"),
+        }
+
+    return send_greetings
+
+
+def build_send_tools(
+    engine,
+    registry: ToolRegistry | None = None,
+    *,
+    executor=None,
+    lock: FlowLock | None = None,
+    get_automation: Callable[[], Any] | None = None,
+    pw_runner: Callable[..., Any] | None = None,
+    paused: Callable[[], bool] | None = None,
+) -> ToolRegistry:
+    """注册 send_greetings 到 registry（缺省新建）。write=True → audit 模式过审批门。"""
+    reg = registry or ToolRegistry()
+    reg.register(
+        "send_greetings",
+        func=send_greetings_factory(
+            engine, executor=executor, lock=lock, get_automation=get_automation, pw_runner=pw_runner, paused=paused
+        ),
+        description=(
+            "给未打招呼的岗位批量发招呼语（写 + 后台长任务，audit 模式下挂起等确认）。"
+            "提交后台任务逐岗位'先写库再发下一个'；每日上限/公司去重/HR 活跃过滤沿用 apply_batch 既有逻辑（不重写）；"
+            "浏览器互斥 FlowLock，对话不阻塞，可随时查进度/停"
+        ),
+        schema=build_tool_schema("send_greetings", "给未打招呼岗位发招呼语（后台长任务）", SendGreetingsParams),
+        write=True,
+    )
+    return reg
+
+
 __all__ = [
     "QueryJobsParams",
     "GetProgressParams",
     "UpdateSettingParams",
     "SearchJobsParams",
     "ConversationsSummaryParams",
+    "SendGreetingsParams",
     "query_jobs_factory",
     "get_progress_factory",
     "update_setting_factory",
     "search_jobs_factory",
     "get_conversations_summary_factory",
+    "build_greeting_unit",
+    "send_greetings_factory",
     "build_read_tools",
     "build_write_tools",
     "build_browser_tools",
+    "build_send_tools",
 ]
