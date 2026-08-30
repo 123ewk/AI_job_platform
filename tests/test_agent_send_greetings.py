@@ -354,3 +354,47 @@ def test_render_greeting_fallback_and_defaults():
     # 模板写了不支持的变量 → 整句兜底，绝不把 "{xxx}" 发给 HR
     fallback = _render_greeting("您好{job_title}{hr_name}", {"job_title": "AI实习", "company": "ACME"})
     assert "{hr_name}" not in fallback and "AI实习" in fallback
+
+
+# ══════════════════════════════════════════════════════════
+#  8. keyword 关键词筛选库存（V1.3.0：用户反问关键词后定向投递）
+# ══════════════════════════════════════════════════════════
+
+
+def test_send_greetings_keyword_filters_inventory():
+    """keyword 参数只投岗位名/公司命中的库存——用户没说关键词 Agent 须反问，说了就定向投。"""
+    eng = _engine()
+    _insert(eng, "大模型算法实习生", state.JobStatus.PENDING)
+    _insert(eng, "前端开发", state.JobStatus.PENDING)
+    _insert(eng, "后端开发", state.JobStatus.PENDING)
+
+    tool, ex, r = _tool(eng)
+    out = tool(max_count=10, keyword="大模型")
+
+    assert out["error"] is None
+    assert out["count"] == 1 and out["keyword"] == "大模型"
+    assert ex.submits[0]["params"]["keyword"] == "大模型"  # 任务参数可追溯
+
+    unit = ex.captured_unit
+    unit(1)
+    with SASession(eng) as s:
+        greeted = s.execute(
+            select(models.Application.job_title).where(models.Application.status == state.JobStatus.GREETED)
+        ).scalars().all()
+    assert greeted == ["大模型算法实习生"]  # 只有命中关键词的岗位被动过
+
+
+def test_send_greetings_keyword_case_insensitive_and_no_match():
+    """keyword 大小写不敏感（Java vs java）；无命中时报错且不提交任务。"""
+    eng = _engine()
+    _insert(eng, "Java后端开发", state.JobStatus.PENDING)
+    _insert(eng, "前端开发", state.JobStatus.PENDING)
+
+    tool, ex, r = _tool(eng)
+    out = tool(max_count=10, keyword="java")
+    assert out["error"] is None and out["count"] == 1
+
+    out2 = tool(max_count=5, keyword="不存在的词")
+    assert out2["error"] == "没有匹配关键词的岗位"
+    assert "不存在的词" in out2["message"]
+    assert ex.submits and len(ex.submits) == 1  # 第二次没有提交（只有第一次的）

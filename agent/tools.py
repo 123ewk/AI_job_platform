@@ -132,9 +132,18 @@ class SendGreetingsParams(BaseModel):
     """send_greetings 入参（§4.2：打招呼后台长任务）。
 
     一次最多给 `max_count` 个岗位发招呼语，取 `min(max_count, 今日剩余额度)`。
+    `keyword`（V1.3.0）：用户指定想投的关键词时必传——只投岗位名/公司命中的库存，
+    避免把鱼龙混杂的整批库存全部投出去（手动端同步有关键词过滤框 + 勾选投递）。
     """
 
     max_count: int = Field(10, ge=1, le=50, description="本次最多打招呼岗位数（1-50，实际取 min(max_count, 今日余量)）")
+    keyword: str | None = Field(
+        None,
+        description=(
+            "投递关键词筛选（可选）。用户说了想投哪类岗位（如'只投大模型''Agent 相关的'）时必须传；"
+            "只投岗位名或公司名包含该关键词的库存岗位。用户没提关键词就不要传，但按规则应先反问用户"
+        ),
+    )
 
 
 # ══════════════════════════════════════════════════════════
@@ -916,10 +925,18 @@ def send_greetings_factory(
         cap = min(p.max_count, remaining)
 
         with SASession(engine) as s:
+            # V1.3.0：keyword 筛选——用户指定关键词时只投岗位名/公司命中的库存（大小写不敏感）
+            filters = [models.Application.status.in_(sorted(state.JobStatus.GREETABLE))]
+            kw = (p.keyword or "").strip()
+            if kw:
+                like = f"%{kw}%"
+                filters.append(
+                    models.Application.job_title.ilike(like) | models.Application.company.ilike(like)
+                )
             rows = (
                 s.execute(
                     select(models.Application)
-                    .where(models.Application.status.in_(sorted(state.JobStatus.GREETABLE)))
+                    .where(*filters)
                     .order_by(models.Application.updated_at.desc())
                     .limit(cap)
                 )
@@ -928,6 +945,11 @@ def send_greetings_factory(
             )
             jobs = [_application_job_row(r) for r in rows]
         if not jobs:
+            if kw:
+                return {
+                    "error": "没有匹配关键词的岗位",
+                    "message": f"库存里没有岗位名/公司含「{kw}」的未打招呼岗位；可先 search_jobs 搜新的，或让用户换关键词/去掉筛选",
+                }
             return {"error": "没有可打招呼的岗位", "message": "仓库里没有未打招呼（pending/discovered）的岗位"}
 
         greeting = _resolve_greeting(engine, jobs)
@@ -941,6 +963,7 @@ def send_greetings_factory(
             params={
                 "count": len(jobs),
                 "greeting": greeting,
+                "keyword": kw or None,
                 # 崩溃恢复（Step 4.3）用 job_urls 把 progress_done 下标映射回在途岗位，
                 # 定位"发送结果未知"岗位做隔离，防止续投重复打招呼。
                 "job_urls": [j["job_url"] for j in jobs],
@@ -956,6 +979,7 @@ def send_greetings_factory(
             "error": None,
             "task_id": task_id,
             "count": len(jobs),
+            "keyword": kw or None,
             "remaining": remaining,
             "daily_limit": progress.get("daily_limit"),
             "effective_limit": progress.get("effective_limit"),
@@ -985,9 +1009,11 @@ def build_send_tools(
         description=(
             "给未打招呼的岗位批量发招呼语（写 + 后台长任务，audit 模式下挂起等确认）。"
             "提交后台任务逐岗位'先写库再发下一个'；每日上限/公司去重/HR 活跃过滤沿用 apply_batch 既有逻辑（不重写）；"
-            "浏览器互斥 FlowLock，对话不阻塞，可随时查进度/停"
+            "浏览器互斥 FlowLock，对话不阻塞，可随时查进度/停。"
+            "用户指定了想投的关键词时必须传 keyword 参数（只投岗位名/公司命中的库存）；"
+            "用户没说关键词时先 ask_user 反问，不要把鱼龙混杂的整批库存全投出去"
         ),
-        schema=build_tool_schema("send_greetings", "给未打招呼岗位发招呼语（后台长任务）", SendGreetingsParams),
+        schema=build_tool_schema("send_greetings", "给未打招呼岗位发招呼语（后台长任务，可按关键词筛选库存）", SendGreetingsParams),
         write=True,
     )
     return reg

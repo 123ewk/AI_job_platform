@@ -1583,18 +1583,24 @@ td a:hover{color:var(--accent)}
   max-height:160px;
   overflow-y:auto;
 }
-/* V1.2.28 审批卡放大：卡片是 shrink-to-fit（随内容收缩），JSON 短行会把它缩成 ~190px
-   一条——显式给宽度 + 提字号，参数块加高，按钮行独立成行右对齐 */
+/* V1.2.28→V1.3.0 审批卡尺寸：卡片父级 .msg-body 是 shrink-to-fit，width/percent 会退化成
+   内容宽（用户实测仍 ~200px）。改用 min-width 底宽语义：最小 420px，参数多了动态变宽，
+   上限仍是 msg-body 的 min(70%,640px)——正是"设个最小弹窗，大于它才动态变化" */
 .agent-step-card.approval-card{
-  width:min(560px,100%);
+  min-width:420px;
+  max-width:100%;
   font-size:13px;
   padding:14px 16px;
 }
 .approval-card .approval-args{font-size:12px;max-height:240px;margin:10px 0}
 .approval-card .approval-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:2px}
+/* V1.3.0 岗位勾选框（勾选投递/删除，手动专属） */
+.job-check{display:flex;align-items:center;cursor:pointer;flex-shrink:0;padding-top:2px}
+.job-check input{width:15px;height:15px;accent-color:var(--accent-2);cursor:pointer;margin:0}
 
 /* ============ Mobile ============ */
 @media(max-width:768px){
+  .agent-step-card.approval-card{min-width:0}
   .sidebar{width:56px;padding:14px 8px}
   .sidebar-logo .logo-text,
   .sidebar-nav a span:not(.icon),
@@ -1844,6 +1850,14 @@ td a:hover{color:var(--accent)}
 
       <div id="searchStatus"></div>
       <div id="funnelBar" class="funnel-grid" style="display:none;"></div>
+      <!-- V1.3.0 勾选投递/删除 + 关键词过滤（手动专属；Agent 走 send_greetings 的 keyword 参数） -->
+      <div style="display:flex;gap:8px;align-items:center;margin:10px 0;flex-wrap:wrap;">
+        <input type="text" id="jobFilterInput" class="search-input" style="max-width:260px;min-width:180px;" placeholder="关键词过滤岗位/公司，如：大模型" oninput="renderJobs(currentSearchJobs)">
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-3);cursor:pointer;white-space:nowrap;"><input type="checkbox" id="jobCheckAll" onchange="toggleAllJobs(this)">全选当前显示</label>
+        <button class="btn btn-sm btn-success" id="btnApplySelected" onclick="applySelectedJobs(this)" disabled>投递勾选</button>
+        <button class="btn btn-sm btn-danger" id="btnDeleteSelected" onclick="deleteSelectedJobs(this)" disabled>删除勾选</button>
+        <span id="jobSelectedInfo" style="font-size:12px;color:var(--text-3);"></span>
+      </div>
       <div class="jobs-grid" id="jobsGrid"><div class="empty" style="grid-column:1/-1;"><div class="empty-icon">🔍</div>点击搜索获取岗位</div></div>
     </div>
 
@@ -2000,6 +2014,7 @@ td a:hover{color:var(--accent)}
 
 <script>
 let activeTab='search',activeConvId=null,ws=null,conversations=[],currentSearchJobs=[],searchInFlight=false,sessionSearchPending=0,sessionSearchApplied=0,sessionSearchFiltered=0,clearApiKeyFlag=false;
+let jobChecked=new Set(); /* V1.3.0 勾选投递/删除：存 job_url（手动专属能力） */
 
 // 默认值（与用户数据库 settings 保持一致）
 const DEFAULT_RESUME_SUMMARY = `【岗位经验】
@@ -2238,6 +2253,7 @@ function doSearch(){
     localStorage.setItem('ui_setSearchKeywords',document.getElementById('setSearchKeywords').value);
   }catch(e){}
   searchInFlight=true;
+  clearJobChecked(); /* V1.3.0 新搜索开始：清空上一轮勾选 */
   document.getElementById('searchStatus').innerHTML='<div class="status-banner"><div class="spinner"></div> 搜索中...</div>';
   const body={
     keyword:document.getElementById('searchKeyword').value,
@@ -2289,16 +2305,25 @@ function doSearch(){
     toast(toastMsg,'success');
   }).catch(err=>{searchInFlight=false;document.getElementById('searchStatus').innerHTML='<div class="status-banner" style="margin-top:8px;">失败: '+esc(err.message)+'</div>';toast('搜索失败: '+err.message,'error');});
 }
-function loadJobs(){fetch('/api/jobs?limit=50').then(r=>r.json()).then(d=>{currentSearchJobs=[];renderJobs((d.jobs||[]).filter(j=>j.status!=='filtered'));});}
+function loadJobs(){fetch('/api/jobs?limit=50').then(r=>r.json()).then(d=>{currentSearchJobs=[];clearJobChecked();renderJobs((d.jobs||[]).filter(j=>j.status!=='filtered'));});}
 
 function renderJobs(jobs){
   const grid=document.getElementById('jobsGrid');
-  if(!jobs||!jobs.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1;"><div class="empty-icon">📭</div>暂无岗位</div>';let fp=document.getElementById('funnelPending');if(fp)animateNumber(fp,sessionSearchPending);animateNumber(document.getElementById('metaJobsJobs')||document.getElementById('metaJobs'),0);return;}
+  if(!jobs||!jobs.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1;"><div class="empty-icon">📭</div>暂无岗位</div>';let fp=document.getElementById('funnelPending');if(fp)animateNumber(fp,sessionSearchPending);animateNumber(document.getElementById('metaJobsJobs')||document.getElementById('metaJobs'),0);window._lastShownJobUrls=[];return;}
   const sl={pending:'待投递',applied:'已投递',replied:'需要回复',skipped:'已跳过',failed:'失败',filtered:'已过滤',missing_url:'缺少链接'};
   const sb={pending:'badge-pending',applied:'badge-applied',replied:'badge-replied',skipped:'badge-skipped',failed:'badge-failed',filtered:'badge-filtered',missing_url:'badge-missing_url'};
   const inactiveDaysEl=document.getElementById('inactiveDays');
   const inactiveThreshold=inactiveDaysEl?parseInt(inactiveDaysEl.value||'7',10):7;
-  grid.innerHTML=jobs.map((j,idx)=>{
+  // V1.3.0 关键词过滤：前端内存过滤显示（不动 currentSearchJobs，清空输入即恢复全部）
+  const kwEl=document.getElementById('jobFilterInput');
+  const kw=kwEl?(kwEl.value||'').trim().toLowerCase():'';
+  const shown=kw?jobs.filter(j=>(((j.job_title||j.title||'')+' '+(j.company||'')).toLowerCase().includes(kw))):jobs;
+  window._lastShownJobUrls=shown.map(j=>j.job_url).filter(Boolean);
+  if(!shown.length){
+    grid.innerHTML='<div class="empty" style="grid-column:1/-1;"><div class="empty-icon">🔍</div>没有匹配「'+esc(kw)+'」的岗位</div>';
+    return;
+  }
+  grid.innerHTML=shown.map((j,idx)=>{
     let hasUrl=!!j.job_url,s=j.status||(hasUrl?'pending':'missing_url'),titleText=j.job_title||j.title||'未知';
     let title=hasUrl?'<a href="'+attr(j.job_url)+'" target="_blank" rel="noopener">'+esc(titleText)+'</a>':esc(titleText);
     let acts='';
@@ -2321,7 +2346,10 @@ function renderJobs(jobs){
 
     return'<div class="job-card" style="animation-delay:'+Math.min(idx*0.04,0.3)+'s">'
       +'<div class="job-card-head">'
-      +'<div class="title">'+title+'</div>'
+      +'<div style="display:flex;align-items:flex-start;gap:8px;min-width:0;flex:1;">'
+      +(hasUrl?'<label class="job-check" title="勾选后可批量投递/删除"><input type="checkbox" data-url="'+attr(j.job_url)+'" '+(jobChecked.has(j.job_url)?'checked':'')+' onclick="event.stopPropagation();toggleJobCheck(this)"></label>':'')
+      +'<div class="title" style="min-width:0;">'+title+'</div>'
+      +'</div>'
       +(j.salary?'<div class="salary">'+esc(j.salary)+'</div>':'')
       +'</div>'
       +'<div class="job-card-body">'
@@ -2367,6 +2395,54 @@ function skipJob(id){
     refreshStatus();if(activeTab==='applications')loadApplications();
     toast('已跳过','info',1500);
   });
+}
+
+/* —— V1.3.0 勾选投递/删除（手动专属；Agent 走 send_greetings 的 keyword 参数）—— */
+function clearJobChecked(){
+  jobChecked.clear();
+  const ca=document.getElementById('jobCheckAll');if(ca)ca.checked=false;
+  updateSelectedBar();
+}
+function toggleJobCheck(input){
+  const url=input.dataset.url||'';if(!url)return;
+  if(input.checked)jobChecked.add(url);else jobChecked.delete(url);
+  updateSelectedBar();
+}
+function updateSelectedBar(){
+  const n=jobChecked.size;
+  const info=document.getElementById('jobSelectedInfo');
+  const ba=document.getElementById('btnApplySelected'),bd=document.getElementById('btnDeleteSelected');
+  if(info)info.textContent=n?('已勾选 '+n+' 个'):'';
+  if(ba){ba.disabled=!n;ba.textContent=n?('投递勾选 ('+n+')'):'投递勾选';}
+  if(bd){bd.disabled=!n;bd.textContent=n?('删除勾选 ('+n+')'):'删除勾选';}
+}
+function toggleAllJobs(el){
+  const urls=window._lastShownJobUrls||[];
+  if(el.checked)urls.forEach(u=>jobChecked.add(u));else urls.forEach(u=>jobChecked.delete(u));
+  document.querySelectorAll('#jobsGrid .job-check input').forEach(i=>{i.checked=jobChecked.has(i.dataset.url);});
+  updateSelectedBar();
+}
+function applySelectedJobs(btn){
+  const urls=[...jobChecked];
+  if(!urls.length){toast('先勾选岗位','info');return;}
+  _showPopoverConfirm(btn,'将按顺序投递勾选的 '+urls.length+' 个岗位（沿用每日上限/公司去重/HR 活跃过滤，可中途取消）',function(){
+    clearJobChecked();
+    doBatchApply(urls,'searchStatus');
+  },'投递','btn-success');
+}
+function deleteSelectedJobs(btn){
+  const urls=[...jobChecked];
+  if(!urls.length){toast('先勾选岗位','info');return;}
+  _showPopoverConfirm(btn,'将移除勾选的 '+urls.length+' 个岗位（软删除：默认列表不再显示，之后搜到同岗位会自动恢复）',function(){
+    fetch('/api/jobs/delete-batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_urls:urls})}).then(r=>r.json()).then(d=>{
+      const gone=new Set(urls);
+      currentSearchJobs=currentSearchJobs.filter(j=>!gone.has(j.job_url));
+      clearJobChecked();
+      renderJobs(currentSearchJobs);refreshStatus();
+      if(activeTab==='applications')loadApplications();
+      toast('已删除 '+((d&&d.deleted!=null)?d.deleted:urls.length)+' 个岗位（可恢复）','success');
+    }).catch(()=>toast('删除请求失败','error'));
+  },'删除','btn-danger');
 }
 
 function analyzeJob(url,title,company,desc,companyId,companyAlreadyApplied){

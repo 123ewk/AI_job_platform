@@ -1025,6 +1025,12 @@ class ApplyBatchRequest(BaseModel):
     jobs: Optional[List[dict]] = None  # [{url, company, company_id, hr_active_days, ...}]
 
 
+class DeleteJobsRequest(BaseModel):
+    """批量删除岗位（V1.3.0 勾选删除）：软删置 filtered——默认列表/投递漏斗排除该状态，
+    但不丢数据；同岗位再次搜到时 _persist_discovered 会自动恢复 pending（可反悔）。"""
+    job_urls: List[str]
+
+
 class ScanAndApplyRequest(BaseModel):
     greeting: Optional[str] = None
     max_pages: Optional[int] = 5
@@ -1596,6 +1602,21 @@ async def skip_job(job_id: int):
     update_application_status(job_id, "skipped")
     await broadcast_ws({"type": "job_updated", "job_id": job_id, "status": "skipped"})
     return {"status": "ok"}
+
+
+@app.post("/api/jobs/delete-batch")
+async def delete_jobs_batch(req: DeleteJobsRequest):
+    """V1.3.0 勾选批量删除：按 job_url 置 filtered（软删，可恢复，见 DeleteJobsRequest）。"""
+    deleted, missing = 0, 0
+    for url in req.job_urls:
+        row = get_application_by_url(url)
+        if row and row.get("id"):
+            update_application_status(int(row["id"]), "filtered")
+            deleted += 1
+        else:
+            missing += 1
+    await broadcast_ws({"type": "jobs_deleted", "count": deleted})
+    return {"deleted": deleted, "missing": missing}
 
 
 # ══════════════════════════════════════
