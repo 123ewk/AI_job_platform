@@ -2433,11 +2433,12 @@ function toggleAllJobs(el){
 function applySelectedJobs(btn){
   const urls=[...jobChecked];
   if(!urls.length){toast('先勾选岗位','info');return;}
-  // 只拦"已投递"（重复外发）；需回复/已跳过/已过滤/失败等状态按用户要求均可再投
-  const applicable=urls.filter(u=>{const j=currentSearchJobs.find(x=>x.job_url===u);return !(j&&j.status==='applied');});
-  if(!applicable.length){toast('勾选的岗位都已投递过','warning');return;}
+  // 只拦"已投递/已过滤"（重复外发 / 软删态保持删除语义）；其余状态均可再投。
+  // 不可投的岗位不报警，静默跳过（确认弹窗只列可投数）
+  const applicable=urls.filter(u=>{const j=currentSearchJobs.find(x=>x.job_url===u);return !(j&&(j.status==='applied'||j.status==='filtered'));});
+  if(!applicable.length){toast('勾选中没有可投递的岗位','info');return;}
   const skippedN=urls.length-applicable.length;
-  _showPopoverConfirm(btn,'将按顺序投递勾选的 '+applicable.length+' 个岗位'+(skippedN?('（另 '+skippedN+' 个已投递的将跳过）'):'')+'（沿用每日上限/公司去重/HR 活跃过滤，可中途取消）',function(){
+  _showPopoverConfirm(btn,'将按顺序投递勾选的 '+applicable.length+' 个岗位'+(skippedN?('（另 '+skippedN+' 个已投递/已过滤的将跳过）'):'')+'（沿用每日上限/公司去重/HR 活跃过滤，可中途取消）',function(){
     clearJobChecked();
     doBatchApply(applicable,'searchStatus');
   },'投递','btn-success');
@@ -2486,11 +2487,12 @@ function toggleAllAppJobs(el){
 function applySelectedAppJobs(btn){
   const urls=[...appChecked];
   if(!urls.length){toast('先勾选岗位','info');return;}
-  // 只拦"已投递"（重复外发）；需回复/已跳过/已过滤/失败等状态按用户要求均可再投
-  const applicable=urls.filter(u=>{const j=appAllJobs.find(x=>x.job_url===u);return j&&j.status!=='applied';});
-  if(!applicable.length){toast('勾选的岗位都已投递过','warning');return;}
+  // 只拦"已投递/已过滤"（重复外发 / 软删态保持删除语义）；其余状态均可再投。
+  // 不可投的岗位不报警，静默跳过（确认弹窗只列可投数）
+  const applicable=urls.filter(u=>{const j=appAllJobs.find(x=>x.job_url===u);return j&&j.status!=='applied'&&j.status!=='filtered';});
+  if(!applicable.length){toast('勾选中没有可投递的岗位','info');return;}
   const skippedN=urls.length-applicable.length;
-  const desc='将按顺序投递勾选的 '+applicable.length+' 个岗位'+(skippedN?('（另 '+skippedN+' 个已投递的将跳过）'):'')+'（沿用每日上限/公司去重/HR 活跃过滤，可中途取消）';
+  const desc='将按顺序投递勾选的 '+applicable.length+' 个岗位'+(skippedN?('（另 '+skippedN+' 个已投递/已过滤的将跳过）'):'')+'（沿用每日上限/公司去重/HR 活跃过滤，可中途取消）';
   _showPopoverConfirm(btn,desc,function(){
     clearAppChecked();
     doBatchApply(applicable,'applyProgress');

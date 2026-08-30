@@ -77,6 +77,18 @@ def test_dashboard_has_keyword_filter_and_select_toolbar():
     assert "doBatchApply(applicable,'searchStatus')" in html
 
 
+def test_dashboard_apply_selection_skips_applied_and_filtered_silently():
+    """V1.3.0 终版规则：勾选投递只拦"已投递/已过滤"，其余状态均可再投；不可投的静默跳过
+    （无命中时 info 提示而非 warning 报警）。"""
+    html = _html()
+    # 两处勾选投递（搜索页 / 岗位列表）同规则：applied+filtered 都拦
+    assert "j.status==='applied'||j.status==='filtered'" in html
+    assert "j.status!=='applied'&&j.status!=='filtered'" in html
+    # 无可投岗位：info 提示（不报错），不弹 warning
+    assert html.count("toast('勾选中没有可投递的岗位','info')") == 2
+    assert "勾选的岗位都已投递过" not in html
+
+
 def test_dashboard_applications_tab_has_same_features():
     """V1.3.0：岗位列表（applications 表）也有同款过滤 + 勾选投递/删除。"""
     html = _html()
