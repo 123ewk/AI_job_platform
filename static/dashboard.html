@@ -1880,8 +1880,16 @@ td a:hover{color:var(--accent)}
           <button class="btn btn-sm btn-danger" onclick="confirmClearApplications()">清空列表</button>
         </div>
         <div id="applyProgress"></div>
+        <!-- V1.3.0 岗位列表同款：关键词过滤 + 勾选投递/删除（手动专属） -->
+        <div style="display:flex;gap:8px;align-items:center;margin:0 0 12px;flex-wrap:wrap;">
+          <input type="text" id="appFilterInput" class="search-input" style="max-width:260px;min-width:180px;" placeholder="关键词过滤岗位/公司，如：大模型" oninput="appCurrentPage=1;renderAppPage()">
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-3);cursor:pointer;white-space:nowrap;"><input type="checkbox" id="appCheckAll" onchange="toggleAllAppJobs(this)">全选当前页</label>
+          <button class="btn btn-sm btn-success" id="btnAppApplySelected" onclick="applySelectedAppJobs(this)" disabled>投递勾选</button>
+          <button class="btn btn-sm btn-danger" id="btnAppDeleteSelected" onclick="deleteSelectedAppJobs(this)" disabled>删除勾选</button>
+          <span id="appSelectedInfo" style="font-size:12px;color:var(--text-3);"></span>
+        </div>
         <div class="table-wrap">
-          <table><thead><tr><th>岗位</th><th>公司</th><th>薪资</th><th>城市</th><th>状态</th><th>操作</th></tr></thead><tbody id="appTableBody"><tr><td colspan="6" class="empty">暂无数据</td></tr></tbody></table>
+          <table><thead><tr><th></th><th>岗位</th><th>公司</th><th>薪资</th><th>城市</th><th>状态</th><th>操作</th></tr></thead><tbody id="appTableBody"><tr><td colspan="7" class="empty">暂无数据</td></tr></tbody></table>
         </div>
         <div class="pagination" id="appPagination"></div>
       </div>
@@ -2445,6 +2453,57 @@ function deleteSelectedJobs(btn){
   },'删除','btn-danger');
 }
 
+/* —— V1.3.0 岗位列表（applications 表）同款：过滤 + 勾选投递/删除 —— */
+let appChecked=new Set();
+function clearAppChecked(){
+  appChecked.clear();
+  const ca=document.getElementById('appCheckAll');if(ca)ca.checked=false;
+  updateAppSelectedBar();
+}
+function toggleAppCheck(input){
+  const url=input.dataset.url||'';if(!url)return;
+  if(input.checked)appChecked.add(url);else appChecked.delete(url);
+  updateAppSelectedBar();
+}
+function updateAppSelectedBar(){
+  const n=appChecked.size;
+  const info=document.getElementById('appSelectedInfo');
+  const ba=document.getElementById('btnAppApplySelected'),bd=document.getElementById('btnAppDeleteSelected');
+  if(info)info.textContent=n?('已勾选 '+n+' 个'):'';
+  if(ba){ba.disabled=!n;ba.textContent=n?('投递勾选 ('+n+')'):'投递勾选';}
+  if(bd){bd.disabled=!n;bd.textContent=n?('删除勾选 ('+n+')'):'删除勾选';}
+}
+function toggleAllAppJobs(el){
+  const urls=window._lastAppPageUrls||[];
+  if(el.checked)urls.forEach(u=>appChecked.add(u));else urls.forEach(u=>appChecked.delete(u));
+  document.querySelectorAll('#appTableBody .app-check').forEach(i=>{i.checked=appChecked.has(i.dataset.url);});
+  updateAppSelectedBar();
+}
+function applySelectedAppJobs(btn){
+  const urls=[...appChecked];
+  if(!urls.length){toast('先勾选岗位','info');return;}
+  // 只投待投递/失败状态的勾选项；已投/需回复等状态自动跳过（后端也有日限/去重兜底）
+  const applicable=urls.filter(u=>{const j=appAllJobs.find(x=>x.job_url===u);return j&&(!j.status||j.status==='pending'||j.status==='failed');});
+  if(!applicable.length){toast('勾选的岗位都不是待投递状态','warning');return;}
+  const skippedN=urls.length-applicable.length;
+  const desc='将按顺序投递勾选的 '+applicable.length+' 个待投递岗位'+(skippedN?('（另 '+skippedN+' 个非待投递状态将跳过）'):'')+'（沿用每日上限/公司去重/HR 活跃过滤，可中途取消）';
+  _showPopoverConfirm(btn,desc,function(){
+    clearAppChecked();
+    doBatchApply(applicable,'applyProgress');
+  },'投递','btn-success');
+}
+function deleteSelectedAppJobs(btn){
+  const urls=[...appChecked];
+  if(!urls.length){toast('先勾选岗位','info');return;}
+  _showPopoverConfirm(btn,'将移除勾选的 '+urls.length+' 个岗位（软删除：默认列表不再显示，之后搜到同岗位会自动恢复）',function(){
+    fetch('/api/jobs/delete-batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_urls:urls})}).then(r=>r.json()).then(d=>{
+      clearAppChecked();
+      loadApplications(appCurrentStatus);refreshStatus();
+      toast('已删除 '+((d&&d.deleted!=null)?d.deleted:urls.length)+' 个岗位（可恢复）','success');
+    }).catch(()=>toast('删除请求失败','error'));
+  },'删除','btn-danger');
+}
+
 function analyzeJob(url,title,company,desc,companyId,companyAlreadyApplied){
   let m=document.createElement('div');m.className='analyze-modal-overlay';
   m.innerHTML='<div class="modal-box"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;"><h3>AI 岗位分析</h3><button onclick="this.closest(\'.analyze-modal-overlay\').remove()" style="background:none;border:none;color:var(--text-3);font-size:20px;cursor:pointer;line-height:1;width:28px;height:28px;border-radius:6px;transition:background .15s;color:var(--text-2);" onmouseover="this.style.background=\'var(--bg-2)\'" onmouseout="this.style.background=\'none\'">&times;</button></div>'
@@ -2498,26 +2557,35 @@ function _setAppFilterActive(filterId){
   document.querySelectorAll('[id^="appFilter"]').forEach(b=>b.classList.remove('filter-btn-active'));
   var el=document.getElementById(filterId);if(el)el.classList.add('filter-btn-active');
 }
-function loadApplications(status){appCurrentStatus=status||'';appCurrentPage=1;
+function loadApplications(status){appCurrentStatus=status||'';appCurrentPage=1;clearAppChecked();
   _setAppFilterActive(status==='pending'?'appFilterPending':status==='applied'?'appFilterApplied':status==='replied'?'appFilterReplied':status==='filtered'?'appFilterFiltered':'appFilterAll');
   fetch('/api/jobs?limit=2000'+(status?'&status='+status:'')).then(r=>r.json()).then(d=>{appAllJobs=d.jobs||[];renderAppPage();});}
 function renderAppPage(){
-  let tbody=document.getElementById('appTableBody'),total=appAllJobs.length,totalPages=Math.max(1,Math.ceil(total/APP_PAGE_SIZE)),start=(appCurrentPage-1)*APP_PAGE_SIZE;
+  let tbody=document.getElementById('appTableBody');
+  // V1.3.0 关键词过滤（岗位名/公司，内存过滤，与状态筛选叠加）；过滤先行再分页
+  const kwEl=document.getElementById('appFilterInput');
+  const kw=kwEl?(kwEl.value||'').trim().toLowerCase():'';
+  const base=kw?appAllJobs.filter(j=>(((j.job_title||j.title||'')+' '+(j.company||'')).toLowerCase().includes(kw))):appAllJobs;
+  let total=base.length,totalPages=Math.max(1,Math.ceil(total/APP_PAGE_SIZE)),start=(appCurrentPage-1)*APP_PAGE_SIZE;
   appTotalPages=totalPages;
   if(appCurrentPage>totalPages)appCurrentPage=totalPages;
-  let page=appAllJobs.slice(start,start+APP_PAGE_SIZE);
-  if(!total){tbody.innerHTML='<tr><td colspan="6" class="empty">暂无记录</td></tr>';document.getElementById('appPagination').innerHTML='';return;}
+  let page=base.slice(start,start+APP_PAGE_SIZE);
+  window._lastAppPageUrls=page.map(j=>j.job_url).filter(Boolean);
+  const ca=document.getElementById('appCheckAll');
+  if(ca)ca.checked=window._lastAppPageUrls.length>0&&window._lastAppPageUrls.every(u=>appChecked.has(u));
+  if(!total){tbody.innerHTML='<tr><td colspan="7" class="empty">'+(kw?('没有匹配「'+esc(kw)+'」的记录'):'暂无记录')+'</td></tr>';document.getElementById('appPagination').innerHTML='';window._lastAppPageUrls=[];return;}
   let sl={pending:'待投递',applied:'已投递',replied:'需要回复',skipped:'已跳过',failed:'失败',filtered:'已过滤'},sb={pending:'badge-pending',applied:'badge-applied',replied:'badge-replied',skipped:'badge-skipped',failed:'badge-failed',filtered:'badge-filtered'};
-  tbody.innerHTML=page.map(j=>{let s=j.status||'pending';return'<tr><td><a href="'+attr(j.job_url)+'" target="_blank">'+esc(j.job_title||j.title||'未知')+'</a></td><td>'+esc(j.company||'')+'</td><td>'+esc(j.salary||'')+'</td><td>'+esc(j.city||'')+'</td><td><span class="badge '+sb[s]+'">'+sl[s]+'</span></td><td>'+(j.job_url?'<button class="btn btn-sm btn-primary" onclick="applyOne(\''+attr(j.job_url)+'\',this)">投递</button>':'')+'</td></tr>';}).join('');
+  tbody.innerHTML=page.map(j=>{let s=j.status||'pending';return'<tr><td>'+(j.job_url?'<input type="checkbox" class="app-check" data-url="'+attr(j.job_url)+'" title="勾选后可批量投递/删除" '+(appChecked.has(j.job_url)?'checked':'')+' onclick="toggleAppCheck(this)">':'')+'</td><td><a href="'+attr(j.job_url)+'" target="_blank">'+esc(j.job_title||j.title||'未知')+'</a></td><td>'+esc(j.company||'')+'</td><td>'+esc(j.salary||'')+'</td><td>'+esc(j.city||'')+'</td><td><span class="badge '+sb[s]+'">'+sl[s]+'</span></td><td>'+(j.job_url?'<button class="btn btn-sm btn-primary" onclick="applyOne(\''+attr(j.job_url)+'\',this)">投递</button>':'')+'</td></tr>';}).join('');
   document.getElementById('appPagination').innerHTML='<button '+(appCurrentPage<=1?'disabled':'')+' onclick="appCurrentPage=1;renderAppPage()">«</button><button '+(appCurrentPage<=1?'disabled':'')+' onclick="appCurrentPage--;renderAppPage()">‹</button><span>'+(start+1)+'-'+Math.min(start+APP_PAGE_SIZE,total)+' / '+total+'</span><button '+(appCurrentPage>=totalPages?'disabled':'')+' onclick="appCurrentPage++;renderAppPage()">›</button><button '+(appCurrentPage>=totalPages?'disabled':'')+' onclick="appCurrentPage=appTotalPages;renderAppPage()">»</button>';
 }
 
 function loadShortlists(){
   _setAppFilterActive('appFilterShortlist');
+  clearAppChecked(); /* 收藏视图数据源不同，清掉勾选 */
   fetch('/api/shortlists').then(r=>r.json()).then(d=>{
     let tbody=document.getElementById('appTableBody'),sl=d.shortlists||[];
-    if(!sl.length){tbody.innerHTML='<tr><td colspan="6" class="empty">暂无收藏</td></tr>';return;}
-    tbody.innerHTML=sl.map(s=>'<tr><td><a href="'+attr(s.job_url)+'" target="_blank">'+esc(s.job_title)+'</a></td><td>'+esc(s.company||'')+'</td><td>'+esc(s.salary||'')+'</td><td>'+esc(s.city||'')+'</td><td><span class="badge badge-applied">收藏</span></td><td><button class="btn btn-sm" onclick="removeShortlist('+s.id+',this)">取消</button> <button class="btn btn-sm btn-primary" onclick="applyOne(\''+attr(s.job_url)+'\',this)">投递</button></td></tr>').join('');
+    if(!sl.length){tbody.innerHTML='<tr><td colspan="7" class="empty">暂无收藏</td></tr>';return;}
+    tbody.innerHTML=sl.map(s=>'<tr><td></td><td><a href="'+attr(s.job_url)+'" target="_blank">'+esc(s.job_title)+'</a></td><td>'+esc(s.company||'')+'</td><td>'+esc(s.salary||'')+'</td><td>'+esc(s.city||'')+'</td><td><span class="badge badge-applied">收藏</span></td><td><button class="btn btn-sm" onclick="removeShortlist('+s.id+',this)">取消</button> <button class="btn btn-sm btn-primary" onclick="applyOne(\''+attr(s.job_url)+'\',this)">投递</button></td></tr>').join('');
   });
 }
 function removeShortlist(id,btn){fetch('/api/shortlists/'+id,{method:'DELETE'}).then(()=>{loadShortlists();toast('已取消收藏','info',1500);});}

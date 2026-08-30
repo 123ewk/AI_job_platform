@@ -77,6 +77,26 @@ def test_dashboard_has_keyword_filter_and_select_toolbar():
     assert "doBatchApply(urls,'searchStatus')" in html
 
 
+def test_dashboard_applications_tab_has_same_features():
+    """V1.3.0：岗位列表（applications 表）也有同款过滤 + 勾选投递/删除。"""
+    html = _html()
+    # 工具栏：过滤框 + 全选当前页 + 投递/删除勾选按钮 + 计数
+    assert 'id="appFilterInput"' in html and 'id="appCheckAll"' in html
+    assert 'id="btnAppApplySelected"' in html and "applySelectedAppJobs" in html
+    assert 'id="btnAppDeleteSelected"' in html and "deleteSelectedAppJobs" in html
+    assert 'id="appSelectedInfo"' in html
+    # 表头勾选列（7 列）+ 行内 checkbox + 过滤先行再分页（renderAppPage 内）
+    assert '<th></th><th>岗位</th>' in html and 'colspan="7"' in html
+    assert "toggleAppCheck" in html and "appChecked=new Set()" in html
+    app_body = html.split("function renderAppPage()")[1].split("function loadShortlists")[0]
+    assert "appFilterInput" in app_body and "_lastAppPageUrls" in app_body
+    # 勾选投递只投待投递/失败状态（其余跳过），复用串行进度条
+    assert "doBatchApply(applicable,'applyProgress')" in html
+    # 收藏视图数据源不同：清勾选 + 行首占位 td（列对齐）
+    short_body = html.split("function loadShortlists()")[1].split("function removeShortlist")[0]
+    assert "clearAppChecked()" in short_body and "'<tr><td></td>" in short_body
+
+
 def test_dashboard_approval_card_uses_min_width():
     html = _html()
     # V1.3.0：shrink-to-fit 父级里 width:min(560px,100%) 的百分比会退化成内容宽（用户实测仍窄）
