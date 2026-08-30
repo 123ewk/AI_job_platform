@@ -47,3 +47,8 @@ def test_dashboard_startup_runs_after_top_level_declarations():
     html = _html()
     assert html.rindex("agentWsConnect();") > html.index("let agentWs=null")
     assert html.rindex("agentWsConnect();") > html.index("let appCurrentPage")
+
+
+def test_agent_bubble_renders_inline_markdown():
+    # V1.2.26：模型汇报带 **加粗**/`代码`，气泡要渲染而不是星号直出
+    assert "agentMd" in _html()

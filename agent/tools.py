@@ -332,18 +332,37 @@ def _default_pw_runner(fn, *args, **kwargs) -> Any:
     search_jobs 在 `asyncio.to_thread` 工作线程执行（无运行中事件循环），故在工具线程
     里 `asyncio.run(_run_pw(...))` 起一个临时循环，把同步浏览器操作提交到 boss_app 的
     pw 单线程池串行执行——与既有端点完全同一条执行路径，只是等待方换了个临时循环。
+
+    `_run_pw` 必须经 live_boss_app() 取：它闭包持有**各自副本**的 _playwright_executor，
+    从影子副本拿会让 start 与工具操作落在不同 OS 线程——Playwright sync 对象绑线程，
+    直接 greenlet "Cannot switch to a different thread"（V1.2.26 用户实测）。
     """
     import asyncio
 
-    from boss_app import _run_pw  # noqa: PLC0415
+    return asyncio.run(live_boss_app()._run_pw(fn, *args, **kwargs))
 
-    return asyncio.run(_run_pw(fn, *args, **kwargs))
+
+def live_boss_app() -> Any:
+    """解析"活着的" boss_app 模块（V1.2.26 hotfix）。
+
+    `python boss_app.py` 启动时服务器模块名是 __main__；本包再 `import boss_app` 会把
+    文件再执行一遍生成影子副本——端点更新的是 __main__ 上的可变全局（automation /
+    monitor_paused / app.state），影子副本永远停在初始值，浏览器工具因此恒报
+    "浏览器未启动"（用户实测：浏览器明明已启动）。判据：__main__.__file__ 是
+    boss_app.py 就优先 __main__，否则（uvicorn boss_app:app 启动）用 boss_app 本尊。
+    """
+    import sys
+
+    main_mod = sys.modules.get("__main__")
+    if main_mod is not None and str(getattr(main_mod, "__file__", "") or "").endswith("boss_app.py"):
+        return main_mod
+    import boss_app as app_mod  # noqa: PLC0415
+
+    return app_mod
 
 
 def _default_get_automation() -> Any:
-    from boss_app import automation  # noqa: PLC0415
-
-    return automation
+    return getattr(live_boss_app(), "automation", None)
 
 
 def _search_page_n(automation, keyword: str, city_code: str, page: int) -> list[dict]:
@@ -460,7 +479,11 @@ def search_jobs_factory(
         try:
             automation = loader()
             if automation is None:
-                return {"error": "浏览器未启动", "message": "请先在设置页启动浏览器（扫码登录）"}
+                return {
+                    "error": "浏览器未启动",
+                    "message": "控制台的自动化浏览器没有在运行（注意：扫码登录≠浏览器已启动，两者独立）。"
+                    "请用户在控制台首页点「启动浏览器」后，再原样重试本工具。",
+                }
 
             from boss_app import CITY_MAP  # noqa: PLC0415
 
@@ -737,7 +760,12 @@ def build_greeting_unit(
         try:
             automation = loader()
             if automation is None:
-                return {"error": "浏览器未启动", "message": "请先在设置页启动浏览器", "job_url": url}
+                return {
+                    "error": "浏览器未启动",
+                    "message": "控制台的自动化浏览器没有在运行（扫码登录≠浏览器已启动），"
+                    "请用户在控制台首页点「启动浏览器」后重试。",
+                    "job_url": url,
+                }
             job_dict = {
                 "url": url,
                 "title": job.get("title") or job.get("job_title") or "",
@@ -760,20 +788,18 @@ def build_greeting_unit(
 
 def _default_executor() -> Any:
     """执行器缺省解析：桥到 boss_app 的 app.state.agent_executor（api._get_executor），
-    进度/终态经其 broadcast 接到 AgentHub → /ws/agent 广播。懒加载避免循环导入。"""
+    进度/终态经其 broadcast 接到 AgentHub → /ws/agent 广播。懒加载避免循环导入；
+    app 必须经 live_boss_app() 取（影子副本的 app.state 没有 executor，见 live_boss_app 文档）。"""
     import types
 
     from agent.api import _get_executor  # noqa: PLC0415
-    from boss_app import app  # noqa: PLC0415
 
-    return _get_executor(types.SimpleNamespace(app=app))
+    return _get_executor(types.SimpleNamespace(app=getattr(live_boss_app(), "app", None)))
 
 
 def _default_paused() -> bool:
     """用户暂停标志缺省解析（懒加载 boss_app.monitor_paused；测试注入 paused=False 则不碰）。"""
-    from boss_app import monitor_paused  # noqa: PLC0415
-
-    return bool(monitor_paused)
+    return bool(getattr(live_boss_app(), "monitor_paused", False))
 
 
 def send_greetings_factory(

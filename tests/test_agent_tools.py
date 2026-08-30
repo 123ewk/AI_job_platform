@@ -759,3 +759,79 @@ def test_agent_chat_search_jobs_end_to_end():
     with eng.connect() as conn:
         statuses = [r[0] for r in conn.exec_driver_sql("SELECT status FROM applications")]
         assert statuses == [state.JobStatus.DISCOVERED]
+
+
+# ──────────────────────────────────────────────────────────
+#  V1.2.26 hotfix 回归：浏览器工具读影子副本 automation 恒 None
+# ──────────────────────────────────────────────────────────
+
+
+def test_default_loader_reads_live_module_not_shadow_copy(monkeypatch):
+    """回归（用户实测：浏览器已启动，agent 浏览器工具仍报「浏览器未启动」）。
+
+    `python boss_app.py` 启动时服务器模块名是 __main__，agent.tools 里
+    `from boss_app import automation` 会触发 import 生成影子副本，其 automation
+    永远停在初始 None——_default_get_automation 必须经 live_boss_app() 读"活着"
+    的那份；uvicorn boss_app:app 启动时反之用 boss_app 本尊。
+    """
+    import sys
+    import types
+
+    from agent import tools as t
+
+    live = types.SimpleNamespace(page=object())
+    main_mod = types.ModuleType("__main__")
+    main_mod.__file__ = r"G:\my\my_file\AI_job_platform\boss_app.py"
+    main_mod.automation = live
+    main_mod.monitor_paused = True
+    shadow = types.ModuleType("boss_app")
+    shadow.automation = None
+    shadow.monitor_paused = False
+    monkeypatch.setitem(sys.modules, "__main__", main_mod)
+    monkeypatch.setitem(sys.modules, "boss_app", shadow)
+
+    assert t._default_get_automation() is live  # python boss_app.py 启动态
+    assert t._default_paused() is True
+
+    other = types.ModuleType("__main__")
+    other.__file__ = "/x/uvicorn/__main__.py"
+    monkeypatch.setitem(sys.modules, "__main__", other)
+    shadow.automation = live  # uvicorn 启动态：boss_app 本尊持有
+    assert t._default_get_automation() is live
+    assert t._default_paused() is False
+
+    shadow.automation = None
+    assert t._default_get_automation() is None  # 两侧都未启动 → 维持 None 语义
+
+
+def test_default_pw_runner_uses_live_module_executor(monkeypatch):
+    """回归：_run_pw 闭包持有各自副本的 _playwright_executor（单线程池）。
+
+    从影子副本拿 `_run_pw` 会让浏览器 start 与工具操作落在不同 OS 线程——
+    Playwright sync 对象绑线程，直接 greenlet "Cannot switch to a different thread"
+    （V1.2.26 用户实测）。必须取 live_boss_app() 的那份。
+    """
+    import sys
+    import types
+
+    from agent import tools as t
+
+    calls = []
+
+    async def _live_run_pw(fn, *a, **k):
+        calls.append(fn)
+        return fn(*a, **k)
+
+    def _shadow_run_pw(fn, *a, **k):
+        raise AssertionError("影子副本的 _run_pw 不应被调用")
+
+    main_mod = types.ModuleType("__main__")
+    main_mod.__file__ = r"G:\my\my_file\AI_job_platform\boss_app.py"
+    main_mod._run_pw = _live_run_pw
+    shadow = types.ModuleType("boss_app")
+    shadow._run_pw = _shadow_run_pw
+    monkeypatch.setitem(sys.modules, "__main__", main_mod)
+    monkeypatch.setitem(sys.modules, "boss_app", shadow)
+
+    assert t._default_pw_runner(lambda: "ok") == "ok"
+    assert len(calls) == 1

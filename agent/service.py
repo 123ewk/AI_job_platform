@@ -35,10 +35,14 @@ from db import models
 
 
 def _runtime_paused() -> bool:
-    """运行时用户暂停标志（懒加载 boss_app.monitor_paused，避免 registry 构建期 import boss_app）。"""
-    from boss_app import monitor_paused  # noqa: PLC0415
+    """运行时用户暂停标志（懒加载，避免 registry 构建期 import boss_app）。
 
-    return bool(monitor_paused)
+    经 tools.live_boss_app() 取——`python boss_app.py` 启动时 monitor_paused 挂在
+    __main__ 上，直接 `from boss_app import monitor_paused` 读到影子副本恒 False。
+    """
+    from agent.tools import live_boss_app  # noqa: PLC0415
+
+    return bool(getattr(live_boss_app(), "monitor_paused", False))
 
 
 def default_registry(engine=None, *, lock=None, get_automation=None, pw_runner=None, executor=None) -> ToolRegistry:

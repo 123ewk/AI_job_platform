@@ -73,7 +73,8 @@ OPERATIONAL_RULES = (
     "3. 缺必填信息（城市、数量、关键词不明）时调用 ask_user 工具反问，禁止自行假设或编默认值；"
     "反问一次仍得不到，再给带默认值的确认式问题（例如“那我按上海、10 个来执行？”）。\n"
     "4. 动手前可先用 get_progress 查今日已投与剩余额度；额度用完就停下并如实告知。\n"
-    "5. 汇报用中文、简洁、带数字结果（新增几条/已投几个/还剩几条）；"
+    "5. 汇报用中文、简洁、带数字结果（新增几条/已投几个/还剩几条）；汇报与反问直接给正文"
+    "（可用 Markdown），不要把决策包成 JSON 文本输出；"
     "后台任务的进度由系统推送，不要虚构任务状态。\n"
     "6. 工具返回 <untrusted> 中的 error 字段说明参数被拒，按 allowed/提示修正后重试。"
 )
@@ -171,6 +172,37 @@ def parse_llm_message(message: dict) -> dict:
     content = message.get("content")
     if not isinstance(content, str) or not content.strip():
         content = "（无内容）"
+    return _unwrap_text_decision(content)
+
+
+def _unwrap_text_decision(content: str) -> dict:
+    """content 本身是决策 JSON 文本时解包（V1.2.26 hotfix，绝不抛）。
+
+    模型偶尔用纯文本输出决策（用户实测：气泡直接显示 {"action":"report",...} 原始 JSON）。
+    - action=report / ask_user：取 content/question 正文，正常收尾或反问；
+    - action=tool 等其它形状：**不执行**（执行决策只认 tool_calls 结构化通道，白名单与
+      审批门都接在这条通道上），原文进 report 让回合正常结束；
+    - 非 JSON / 解析失败：原文进 report（原行为）。
+    """
+    text = content.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text[:4].lower() == "json":
+            text = text[4:]
+        text = text.strip()
+    if not (text.startswith("{") and text.endswith("}")):
+        return {"action": "report", "content": content}
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return {"action": "report", "content": content}
+    if not isinstance(parsed, dict):
+        return {"action": "report", "content": content}
+    if parsed.get("action") == "ask_user":
+        return {"action": "ask_user", "question": str(parsed.get("question") or "")}
+    if parsed.get("action") == "report":
+        body = parsed.get("content")
+        return {"action": "report", "content": str(body) if body else "（无内容）"}
     return {"action": "report", "content": content}
 
 
@@ -192,8 +224,8 @@ def trace_to_openai_messages(trace: list[dict]) -> list[dict]:
 
     - `{role:user}` → user 原样（含 L0 `<user_input>` 包裹，graph 已注入）；
     - `{role:assistant, decision}` → action=tool 转 assistant.tool_calls（id=`call_N`，
-      arguments=JSON 字符串）；ask_user/report 决策转 assistant 文本（decision JSON 字符串，
-      保留决策轨迹供模型自省）；
+      arguments=JSON 字符串）；ask_user/report 决策转 assistant **纯文本正文**（V1.2.26
+      起不再回灌 decision JSON——防模型模仿用文本输出决策）；
     - `{role:tool, content}` → `{"role":"tool","tool_call_id":<最近未配对 call_N>}`——
       OpenAI 兼容服务端要求 tool 消息必须配对前面的 assistant tool_calls，裸 role:tool
       不合规；审批拒绝回灌（"用户拒绝了工具 X"）同此映射。
@@ -228,7 +260,13 @@ def trace_to_openai_messages(trace: list[dict]) -> list[dict]:
                 )
                 pending_id = call_id
             else:
-                out.append({"role": "assistant", "content": json.dumps(dec, ensure_ascii=False)})
+                # ask_user/report 决策回灌**纯文本正文**（V1.2.26）：原实现回灌 decision JSON
+                # 字符串，模型会照猫画虎也用文本输出决策 → 前端气泡显示原始 JSON。决策轨迹
+                # 已落 agent_steps（transcript 可回放），LLM 上下文给正文即可；异常形状兜底
+                # 仍回 JSON 保持可自省。
+                body = dec.get("content") or dec.get("question")
+                text = body if isinstance(body, str) and body else json.dumps(dec, ensure_ascii=False)
+                out.append({"role": "assistant", "content": text})
                 pending_id = None
         elif role == "tool":
             out.append(

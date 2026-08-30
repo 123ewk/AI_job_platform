@@ -3116,9 +3116,15 @@ function appendAgentRow(html,side){
   const row=document.createElement('div');row.className='msg-row '+side;row.innerHTML=html;
   pane.appendChild(row);pane.scrollTop=pane.scrollHeight;return row;
 }
+function agentMd(s){
+  return esc(s)
+    .replace(/\*\*([^*\n]+)\*\*/g,'<b>$1</b>')
+    .replace(/`([^`\n]+)`/g,'<code>$1</code>')
+    .replace(/\n/g,'<br>');
+}
 function agentBubble(text,fromAgent){
   const av=fromAgent?'<div class="msg-avatar ai-av">AI</div>':'<div class="msg-avatar me-av">我</div>';
-  return appendAgentRow(av+'<div class="msg-body"><div class="msg-bubble">'+esc(text).replace(/\n/g,'<br>')+'</div></div>',fromAgent?'hr':'me');
+  return appendAgentRow(av+'<div class="msg-body"><div class="msg-bubble">'+agentMd(text)+'</div></div>',fromAgent?'hr':'me');
 }
 function appendAgentStep(evt){
   const kind=evt.kind||'?';let detail='';

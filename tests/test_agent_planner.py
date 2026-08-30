@@ -127,6 +127,49 @@ def test_parse_non_dict_arguments_becomes_empty_dict():
 
 
 # ──────────────────────────────────────────────────────────
+#  1b. 文本型决策 JSON 解包（V1.2.26 hotfix：模型用纯文本输出决策）
+# ──────────────────────────────────────────────────────────
+
+
+def test_parse_text_report_json_unwraps_content():
+    # 用户实测：模型把 {"action":"report",...} 决策当文本输出 → 气泡直接显示原始 JSON。
+    # 解包后用户只应看到正文。
+    m = {"content": '{"action": "report", "content": "我又试了一次，仍然返回浏览器未启动"}'}
+    assert planner_mod.parse_llm_message(m) == {
+        "action": "report",
+        "content": "我又试了一次，仍然返回浏览器未启动",
+    }
+
+
+def test_parse_text_report_json_handles_escapes_and_fence():
+    raw = json.dumps({"action": "report", "content": "第一行\n\n第二行"}, ensure_ascii=False)
+    for wrapped in (raw, "```json\n" + raw + "\n```"):
+        dec = planner_mod.parse_llm_message({"content": wrapped})
+        assert dec == {"action": "report", "content": "第一行\n\n第二行"}
+
+
+def test_parse_text_ask_user_json_unwraps_question():
+    m = {"content": '{"action": "ask_user", "question": "需要搜多少条？"}'}
+    assert planner_mod.parse_llm_message(m) == {"action": "ask_user", "question": "需要搜多少条？"}
+
+
+def test_parse_text_tool_json_is_not_executed_stays_report():
+    # 执行决策只认 tool_calls 结构化通道（白名单/审批门的接缝）——文本里的 tool 形状
+    # 不执行，原文进 report 正常收尾。
+    raw = '{"action": "tool", "name": "send_greetings", "arguments": {}}'
+    dec = planner_mod.parse_llm_message({"content": raw})
+    assert dec == {"action": "report", "content": raw}
+
+
+def test_parse_plain_text_report_stays_raw():
+    # 普通（非 JSON）文本不受影响
+    assert planner_mod.parse_llm_message({"content": "今天已投 3 个"}) == {
+        "action": "report",
+        "content": "今天已投 3 个",
+    }
+
+
+# ──────────────────────────────────────────────────────────
 #  2+3. 失败降级 + key 探测
 # ──────────────────────────────────────────────────────────
 
@@ -199,8 +242,9 @@ def test_trace_mapping_pairs_tool_call_ids():
     assert call["function"]["name"] == "query_jobs"
     assert json.loads(call["function"]["arguments"]) == {"status": "pending"}
     assert out[2]["role"] == "tool" and "untrusted" in out[2]["content"]  # L1 包裹原样透传
-    assert out[3]["role"] == "assistant"  # report 决策转 assistant 文本
-    assert json.loads(out[3]["content"])["action"] == "report"
+    # report 决策转 assistant **正文**（V1.2.26 起不再回灌 decision JSON——防模型模仿用文本输出决策）
+    assert out[3]["role"] == "assistant"
+    assert out[3]["content"] == "查完了"
 
 
 def test_trace_mapping_reject_feedback_pairs_with_tool_decision():
