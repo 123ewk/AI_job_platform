@@ -36,7 +36,7 @@ import logging
 from datetime import date, datetime
 from typing import Any, Callable
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import func, select, text, update
 from sqlalchemy.orm import Session as SASession
 
@@ -82,12 +82,41 @@ class UpdateSettingParams(BaseModel):
     value: str = Field("", description="新值（字符串；清空传空串）")
 
 
+# BOSS 求职类型 4 位 code（boss_firefox.search 的 jobType URL 参数；1902=实习 实测可过滤 ~75%+ 实习岗）
+_JOB_TYPE_ALIASES: dict[str, str] = {
+    "全职": "1901", "full": "1901", "full-time": "1901", "fulltime": "1901", "regular": "1901",
+    "实习": "1902", "实习生": "1902", "practice": "1902", "intern": "1902", "internship": "1902",
+    "兼职": "1903", "part": "1903", "part-time": "1903", "parttime": "1903",
+    "1": "1901", "2": "1903", "3": "1902",
+    "1901": "1901", "1902": "1902", "1903": "1903",
+}
+
+
 class SearchJobsParams(BaseModel):
     """search_jobs 入参（§4.2：读浏览器，调既有 BossScraper.search，入库 status=discovered）。"""
 
     keyword: str = Field(..., description="搜索关键词")
     city: str | None = Field(None, description="城市名（缺省取 settings default_city，再缺省'全国'）")
     max_pages: int = Field(1, ge=1, le=3, description="搜索页数上限（1-3）")
+    job_type: str | None = Field(
+        None,
+        description=(
+            "求职类型筛选，可选。用户提到全职/实习/兼职时必须传："
+            "全职=1901、实习=1902、兼职=1903（也接受中文或 full/internship/part-time）；"
+            "用户没提类型就不要传"
+        ),
+    )
+
+    @field_validator("job_type")
+    @classmethod
+    def _normalize_job_type(cls, v: str | None) -> str | None:
+        """别名统一成 BOSS 4 位 code；白名单外直接 ValidationError（L3 错误回灌 LLM 自纠）。"""
+        if v is None or not str(v).strip():
+            return None
+        code = _JOB_TYPE_ALIASES.get(str(v).strip().lower())
+        if code is None:
+            raise ValueError("job_type 只支持：全职(1901) / 实习(1902) / 兼职(1903)")
+        return code
 
 
 class ConversationsSummaryParams(BaseModel):
@@ -365,32 +394,37 @@ def _default_get_automation() -> Any:
     return getattr(live_boss_app(), "automation", None)
 
 
-def _search_page_n(automation, keyword: str, city_code: str, page: int) -> list[dict]:
+def _search_page_n(automation, keyword: str, city_code: str, page: int, job_type: str | None = None) -> list[dict]:
     """翻到搜索第 N 页并提取岗位卡片（整段在 pw 线程里执行）。
 
     第 1 页走既有 `automation.search`（§4.2"调既有 BossScraper.search"）；后续页
     BOSS 分页 URL（`page=N`）+ 复用既有 `_wait_for_jobs_loaded`/`_scroll_all`/
     `_extract_job_cards`（boss_firefox.py 一行不动，仅复用其方法）。
+    job_type（V1.2.27）必须带上——翻页 URL 丢了 jobType，第 2 页起类型筛选会静默失效。
     """
     from urllib.parse import urlencode
 
-    url = "https://www.zhipin.com/web/geek/job?" + urlencode(
-        {"query": keyword, "city": city_code, "page": page}
-    )
+    params: dict[str, Any] = {"query": keyword, "city": city_code, "page": page}
+    if job_type:
+        params["jobType"] = job_type
+    url = "https://www.zhipin.com/web/geek/job?" + urlencode(params)
     automation.page.goto(url, wait_until="domcontentloaded", timeout=45000)
     automation._wait_for_jobs_loaded(min_count=5, max_wait_s=10)
     automation._scroll_all()
     return automation._extract_job_cards()
 
 
-def _search_pages(runner: Callable[..., Any], automation, keyword: str, city_code: str, max_pages: int) -> list[dict]:
-    """逐页搜岗位：第 1 页走 automation.search，2..max_pages 走翻页 URL。"""
+def _search_pages(
+    runner: Callable[..., Any], automation, keyword: str, city_code: str, max_pages: int,
+    job_type: str | None = None,
+) -> list[dict]:
+    """逐页搜岗位：第 1 页走 automation.search（job_type 透传），2..max_pages 走翻页 URL。"""
     jobs: list[dict] = []
     for page in range(1, max_pages + 1):
         if page == 1:
-            page_jobs = runner(automation.search, keyword, city_code) or []
+            page_jobs = runner(automation.search, keyword, city_code, job_type=job_type or "") or []
         else:
-            page_jobs = runner(_search_page_n, automation, keyword, city_code, page) or []
+            page_jobs = runner(_search_page_n, automation, keyword, city_code, page, job_type) or []
         if page_jobs:
             jobs.extend(page_jobs)
     return jobs
@@ -489,12 +523,13 @@ def search_jobs_factory(
 
             city = p.city or _get_setting_value(engine, "default_city", "全国")
             city_code = CITY_MAP.get(city, "100010000")
-            jobs = _search_pages(runner, automation, p.keyword, city_code, p.max_pages)
+            jobs = _search_pages(runner, automation, p.keyword, city_code, p.max_pages, p.job_type)
             added, deduped, restored = _persist_discovered(engine, jobs)
             return {
                 "error": None,
                 "keyword": p.keyword,
                 "city": city,
+                "job_type": p.job_type,
                 "pages": p.max_pages,
                 "found": len(jobs),
                 "added": added,
@@ -636,7 +671,12 @@ def build_browser_tools(
             "搜新岗位（读浏览器，入库 status=discovered）。浏览器被其他流程占用时排队等待（FlowLock 互斥），"
             "不并发抢占"
         ),
-        schema=build_tool_schema("search_jobs", "搜新岗位（读浏览器）", SearchJobsParams),
+        schema=build_tool_schema(
+            "search_jobs",
+            "用浏览器在 BOSS 直聘搜新岗位并入库。用户指定了求职类型（全职/实习/兼职）时"
+            "必须传 job_type 参数（1901/1902/1903），否则搜回来的岗位类型不可控",
+            SearchJobsParams,
+        ),
         write=False,
     )
     reg.register(

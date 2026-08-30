@@ -23,6 +23,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
 from sqlalchemy import select
 from sqlalchemy.orm import Session as SASession
@@ -236,7 +237,21 @@ class AgentService:
                 planner=planner, registry=registry, engine=engine,
                 checkpointer=checkpointer, on_step=on_step,
             )
-            return _run(compiled)
+            try:
+                return _run(compiled)
+            except GraphRecursionError:
+                # V1.2.27：工具轮次打满触发 LangGraph 递归熔断（用户实测：LLM 反复 query_jobs
+                # 重试把 12 步耗尽 → 裸异常变成纯文本 500，前端 r.json() 报 "Unexpected token"）。
+                # 收尾成正常 report 回合（步骤已实时经 WS 推给前端，不丢过程信息）。
+                return {
+                    "session_id": None,
+                    "report": (
+                        "⚠ 这轮连续调用工具的次数达到安全上限，我先停下来了（防止无限循环）。"
+                        "已执行的步骤见上方步骤列表。建议把要求说得更具体（城市/关键词/岗位类型），"
+                        "或点「清空对话」后重新描述。"
+                    ),
+                    "ask_user_question": None,
+                }
 
         if self.checkpointer is not None:
             # 测试/注入的 saver

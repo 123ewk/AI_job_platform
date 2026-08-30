@@ -33,7 +33,9 @@ from sqlalchemy.orm import Session as SASession
 from agent import defense, state
 from db import models
 
-DEFAULT_RECURSION_LIMIT = 12  # §4.1 熔断：替代手写 max_steps
+# §4.1 熔断：替代手写 max_steps。V1.2.27：12→30——LangGraph 按节点计步（plan+execute 各一步），
+# 一轮"查库存→搜索→复核"就要 8-10 步，12 会把正常多轮流程误熔断（用户实测触发裸 500）。
+DEFAULT_RECURSION_LIMIT = 30
 
 
 # ══════════════════════════════════════════════════════════

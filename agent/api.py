@@ -18,10 +18,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from typing import Literal
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from agent.executor import TaskExecutor
@@ -164,6 +166,8 @@ def _get_executor(request_or_ws) -> TaskExecutor:
 
 agent_router = APIRouter()
 
+_log = logging.getLogger(__name__)
+
 
 @agent_router.post("/api/agent/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, http_request: Request) -> ChatResponse:
@@ -174,12 +178,26 @@ async def chat(req: ChatRequest, http_request: Request) -> ChatResponse:
     def on_step(evt: dict) -> None:
         hub.notify_sync({"type": "agent_step", "thread_id": thread_id, **evt})
 
-    result = await svc.chat(
-        req.user_input,
-        thread_id,
-        req.execution_mode,
-        on_step=on_step,
-    )
+    try:
+        result = await svc.chat(
+            req.user_input,
+            thread_id,
+            req.execution_mode,
+            on_step=on_step,
+        )
+    except Exception as e:  # noqa: BLE001 兜底（V1.2.27）：未预期异常也必须回 JSON——
+        # 裸 500 的纯文本 "Internal Server Error" 会让前端 r.json() 直接解析报错
+        _log.exception("agent chat 未预期异常 thread=%s", thread_id)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "thread_id": thread_id,
+                "session_id": None,
+                "report": f"⚠ 服务器内部错误（已记入后台日志）：{e}",
+                "ask_user_question": None,
+                "status": "completed",
+            },
+        )
     hub.notify_sync({"type": "agent_chat_done", "thread_id": thread_id, **result})
     return ChatResponse(**result)
 

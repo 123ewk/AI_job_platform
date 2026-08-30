@@ -44,6 +44,7 @@ import json
 import threading
 import time
 
+import pytest
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
 from sqlalchemy import create_engine, func
@@ -677,6 +678,70 @@ def test_search_jobs_max_pages_navigates_additional_pages():
     assert calls[0] == ("search", "python")
     assert calls[1][0] == "goto"
     assert "page=2" in calls[1][1]
+
+
+def test_search_jobs_job_type_passthrough_and_pagination_keeps_filter():
+    """V1.2.27 job_type：中文/语义别名归一成 BOSS 4 位 code，第 1 页与翻页 URL 都带 jobType。
+
+    背景：用户说"实习"时 Agent 只能把"实习生"塞进 keyword，搜回来的岗位类型不可控；
+    底层 automation.search 早已支持 job_type（1901 全职/1902 实习/1903 兼职），工具层
+    把这个参数透出给 LLM。翻页 URL 若不带 jobType，第 2 页起筛选会静默丢失。
+    """
+    eng = _engine()
+    calls: list[tuple] = []
+
+    class _FakePage:
+        def goto(self, url, **kw):
+            calls.append(("goto", url))
+
+    class _FakeAuto:
+        def __init__(self):
+            self.page = _FakePage()
+
+        def search(self, keyword, city_code, **kw):
+            calls.append(("search", kw.get("job_type")))
+            return [{"title": "J1", "company": "A", "url": "https://z.com/j1", "salary": "5-10K", "city": "杭州"}]
+
+        def _wait_for_jobs_loaded(self, **kw):
+            return 5
+
+        def _scroll_all(self):
+            pass
+
+        def _extract_job_cards(self):
+            return []
+
+    search_jobs = search_jobs_factory(
+        eng, get_automation=lambda: _FakeAuto(), pw_runner=lambda fn, *a, **k: fn(*a, **k)
+    )
+    out = search_jobs(keyword="大模型", max_pages=2, job_type="实习")
+    assert out["error"] is None
+    assert out["job_type"] == "1902"
+    assert calls[0] == ("search", "1902")
+    assert calls[1][0] == "goto"
+    assert "jobType=1902" in calls[1][1]
+
+
+def test_search_jobs_job_type_aliases_and_validation():
+    """job_type 白名单归一：全职(1901)/实习(1902)/兼职(1903) 各别名等价；非法值 L3 拒绝。"""
+    from pydantic import ValidationError
+
+    from agent.tools import SearchJobsParams
+
+    assert SearchJobsParams(keyword="k", job_type="全职").job_type == "1901"
+    assert SearchJobsParams(keyword="k", job_type="1").job_type == "1901"
+    assert SearchJobsParams(keyword="k", job_type="full").job_type == "1901"
+    assert SearchJobsParams(keyword="k", job_type="实习").job_type == "1902"
+    assert SearchJobsParams(keyword="k", job_type="practice").job_type == "1902"
+    assert SearchJobsParams(keyword="k", job_type="兼职").job_type == "1903"
+    assert SearchJobsParams(keyword="k", job_type="part-time").job_type == "1903"
+    assert SearchJobsParams(keyword="k", job_type="1902").job_type == "1902"
+    assert SearchJobsParams(keyword="k", job_type=None).job_type is None
+    assert SearchJobsParams(keyword="k", job_type="  ").job_type is None
+    with pytest.raises(ValidationError):
+        SearchJobsParams(keyword="k", job_type="随便写的")
+    # schema 里必须暴露 job_type（Field description 即 LLM 的参数说明书）
+    assert "job_type" in SearchJobsParams.model_json_schema()["properties"]
 
 
 def test_get_conversations_summary_reads_mirror_db_masked():

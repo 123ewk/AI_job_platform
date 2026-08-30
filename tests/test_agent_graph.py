@@ -250,7 +250,7 @@ def test_recursion_limit_trips_neverending_planner(tmp_path):
     def always_tool(messages, tool_schemas):  # noqa: ANN001, ANN201  # 永不收尾，触发熔断
         return {"action": "tool", "name": "echo", "arguments": {"text": "x"}}
 
-    assert graph.DEFAULT_RECURSION_LIMIT == 12  # §4.1 默认熔断
+    assert graph.DEFAULT_RECURSION_LIMIT == 30  # §4.1 默认熔断（V1.2.27：12→30，12 会误熔断正常多轮流程）
     app = graph.build_agent_graph(planner=always_tool, registry=reg, engine=eng, checkpointer=InMemorySaver())
     try:
         app.invoke(

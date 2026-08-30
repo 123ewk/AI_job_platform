@@ -66,7 +66,8 @@ def _extra_body(cfg: dict) -> dict | None:
 OPERATIONAL_RULES = (
     "工作规则（必须遵守）：\n"
     "1. 打招呼/投递前，必须先用 query_jobs(ungreeted=true) 查本地岗位库存；"
-    "有库存就先用 send_greetings 投库存，库存不够再考虑 search_jobs 搜新的（max_pages≤3）。\n"
+    "有库存就先用 send_greetings 投库存，库存不够再考虑 search_jobs 搜新的（max_pages≤3；"
+    "用户提到全职/实习/兼职时必须传 job_type 参数，不要把“实习”这类词塞进关键词里）。\n"
     "2. 岗位状态词汇（applications.status）：discovered（搜索新入库）、pending（存量待投）、"
     "greeted（已打招呼）、applied/replied/interview（已投递对话中）、filtered（被关键词过滤）、"
     "unknown（结果未知，等人工确认）。\n"

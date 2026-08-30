@@ -179,3 +179,54 @@ def test_ws_agent_streams_step_progress():
             assert done["report"] == "已回显：流式一下"
             assert done["status"] == "completed"
             assert result["resp"].status_code == 200
+
+
+# ══════════════════════════════════════════════════════════
+#  V1.2.27：递归上限友好收尾 + chat 端点 JSON 兜底
+# ══════════════════════════════════════════════════════════
+
+
+def test_chat_recursion_limit_returns_graceful_report(monkeypatch):
+    """工具轮次打满触发 GraphRecursionError 时不再裸抛（此前变成纯文本 500），
+    service 包一层友好收尾 report，前端按正常回合渲染。"""
+    import asyncio
+
+    from langgraph.errors import GraphRecursionError
+
+    from agent import service as service_mod
+
+    class _BoomGraph:
+        def invoke(self, state, config):
+            raise GraphRecursionError("Recursion limit of 30 reached without hitting a stop condition.")
+
+    monkeypatch.setattr(service_mod, "build_agent_graph", lambda **kw: _BoomGraph())
+    svc = service_mod.AgentService(engine=_engine(), checkpointer=object())
+    out = asyncio.run(svc.chat("帮我获取杭州的大模型应用开发实习生的岗位", "t-recur"))
+    assert out["status"] == "completed"
+    assert "安全上限" in (out["report"] or "")
+    assert out["ask_user_question"] is None
+    assert out.get("approval_pending") is None
+
+
+def test_default_recursion_limit_raised_to_30():
+    """V1.2.27：一轮"查库存→搜索→复核"就是 8-10 步（plan+execute 各计一步），
+    12 的旧上限会把正常多轮流程误熔断；提到 30 并用断言守住。"""
+    from agent.graph import DEFAULT_RECURSION_LIMIT
+
+    assert DEFAULT_RECURSION_LIMIT == 30
+
+
+def test_chat_unexpected_error_returns_json_not_plain_text(monkeypatch):
+    """chat 端点兜底：任何未预期异常也必须回 JSON（report 可渲染），
+    绝不让前端收到纯文本 Internal Server Error（r.json() 解析报 Unexpected token）。"""
+    app, client = _app(_engine(), _echo_planner_factory)
+
+    async def _boom(*a, **k):
+        raise RuntimeError("db on fire")
+
+    monkeypatch.setattr(app.state.agent_service, "chat", _boom)
+    resp = client.post("/api/agent/chat", json={"user_input": "hi"})
+    assert resp.status_code == 500
+    data = resp.json()
+    assert "服务器内部错误" in (data["report"] or "")
+    assert data["thread_id"]

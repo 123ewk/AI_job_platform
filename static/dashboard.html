@@ -3200,7 +3200,10 @@ async function sendAgentChat(){
   try{
     const r=await fetch('/api/agent/chat',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({user_input:text,thread_id:agentThreadId,execution_mode:document.getElementById('agentMode').value||'audit'})});
-    const d=await r.json();
+    let d;
+    try{d=await r.json();}
+    catch(_){/* 服务器回了非 JSON（如代理/进程崩溃的纯文本页）——按可渲染消息收尾而不是抛 SyntaxError */
+      d={status:'completed',report:'⚠ 服务器返回异常响应（HTTP '+r.status+'），请查看后台日志后重试'};}
     agentTurnEnd();
     renderAgentTurnResult(d);
   }catch(e){agentTurnEnd();agentBubble('⚠ 请求失败：'+e.message,true);}
