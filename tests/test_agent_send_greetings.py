@@ -95,10 +95,12 @@ class _FakeExecutor:
 class _FakeRunner:
     def __init__(self):
         self.calls = []
+        self.greetings = []  # V1.2.28：捕获每次 apply_batch 收到的 greeting_template
 
     def __call__(self, fn, *args, **kwargs):
         job = (kwargs.get("jobs") or [{}])[0]
         self.calls.append(job)
+        self.greetings.append(kwargs.get("greeting_template"))
         return [{"success": True, "application_id": 1, "message": "投递成功"}]
 
 
@@ -300,3 +302,55 @@ def test_send_greetings_registered_write_true():
     reg = service.default_registry(eng, executor=_FakeExecutor())
     tool = reg.get("send_greetings")
     assert tool is not None and tool.write is True
+
+
+# ══════════════════════════════════════════════════════════
+#  7. 招呼语模板逐岗位实例化（V1.2.28：HR 收到字面 "{job_title}" 回归）
+# ══════════════════════════════════════════════════════════
+
+
+def test_send_greetings_renders_template_placeholders_per_job():
+    """settings 的 greeting_template 是带占位符的**模板**：每个岗位发送前按本岗位替换。
+
+    用户实测回归（V1.2.28）：Agent 批量路径此前把原始模板整批直发（_resolve_greeting 只
+    resolve 不替换），HR 收到字面 "{job_title}"；手动路径经 generate_greeting 的 .replace()
+    所以没事。修复后 Agent 路径与手动路径语义对齐（_render_greeting）。
+    """
+    eng = _engine()
+    _insert(eng, "大模型算法实习生", state.JobStatus.PENDING)
+    _insert(eng, "AI应用开发工程师", state.JobStatus.PENDING)
+    _set_setting(eng, "greeting_template", "您好！看到贵司在招{job_title}，挺感兴趣的。")
+
+    tool, ex, r = _tool(eng)
+    out = tool(max_count=5)
+    assert out["error"] is None
+
+    unit = ex.captured_unit
+    unit(1)
+    unit(2)
+    # runner 收到的 greeting_template 已按各自岗位替换（同一模板 → 两句不同招呼语）
+    assert r.greetings[0] == "您好！看到贵司在招大模型算法实习生，挺感兴趣的。"
+    assert r.greetings[1] == "您好！看到贵司在招AI应用开发工程师，挺感兴趣的。"
+
+    # 写库的招呼语同样是替换后的（dashboard 会话页按 greeting_text 展示）
+    with SASession(eng) as s:
+        row = s.execute(
+            select(models.Application).where(models.Application.job_title == "大模型算法实习生")
+        ).scalar_one()
+    assert row.greeting_text == "您好！看到贵司在招大模型算法实习生，挺感兴趣的。"
+    assert "{job_title}" not in (row.greeting_text or "")
+
+
+def test_render_greeting_fallback_and_defaults():
+    """_render_greeting 边界：字段缺失给默认值；残留未知占位符 → 兜底通用句。"""
+    from agent.tools import _render_greeting
+
+    # 正常替换（company 带空白 → strip）
+    assert _render_greeting("您好{job_title}@{company}", {"job_title": "AI实习", "company": " ACME "}) == (
+        "您好AI实习@ACME"
+    )
+    # 字段全缺 → 默认值（相关岗位/贵公司），不残留花括号
+    assert _render_greeting("您好{job_title}@{company}", {}) == "您好相关岗位@贵公司"
+    # 模板写了不支持的变量 → 整句兜底，绝不把 "{xxx}" 发给 HR
+    fallback = _render_greeting("您好{job_title}{hr_name}", {"job_title": "AI实习", "company": "ACME"})
+    assert "{hr_name}" not in fallback and "AI实习" in fallback

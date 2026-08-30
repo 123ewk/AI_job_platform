@@ -33,6 +33,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, datetime
 from typing import Any, Callable
 
@@ -731,6 +732,25 @@ def _resolve_greeting(engine, jobs: list[dict]) -> str:
     return "您好，我对贵公司的{job_title}岗位很感兴趣，请问可以详细了解一下吗？"
 
 
+_LEFTOVER_PLACEHOLDER = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")
+
+
+def _render_greeting(greeting: str, job: dict) -> str:
+    """按岗位实例化招呼语占位符（{job_title}/{company}），语义对齐 boss_replier.generate_greeting。
+
+    V1.2.28 修复：settings 里的 greeting_template 是带占位符的**模板**，手动路径经
+    generate_greeting 的 .replace() 替换后才发送；Agent 批量路径此前把原始模板整批直发
+    （用户实测：BOSS 上HR 收到字面 "{job_title}"）。现在逐岗位替换；替换后仍残留任何
+    变量形占位符（如模板里写了不支持的 {hr_name}）则兜底成通用句，绝不把花括号原文发给 HR。
+    """
+    title = ((job.get("job_title") or job.get("title") or "").strip() or "相关岗位")
+    company = ((job.get("company") or "").strip() or "贵公司")
+    text = (greeting or "").replace("{job_title}", title).replace("{company}", company)
+    if _LEFTOVER_PLACEHOLDER.search(text):
+        text = f"您好，我对贵公司的{title}岗位很感兴趣，请问可以详细了解一下吗？"
+    return text
+
+
 def _mark_greeted(engine, job_url: str, greeting: str) -> None:
     """写库：apply_batch 成功后置 Agent 侧 'greeted' + 招呼语 + 时间戳（§4.2 '先写库再发下一个'）。
 
@@ -766,7 +786,8 @@ def build_greeting_unit(
        `apply_batch` 跑单岗位（日限 / 公司去重 / HR 活跃过滤**全部沿用其内部逻辑，不重写**）；
     2. 成功后 `_mark_greeted` 写库（置 greeted + 招呼语 + 时间戳）；
     再由 executor 在单位之间检查停止标志并在进入下一单位前落 progress_done——结束当前 DB 语义
-    才可见"发下一个"。
+    才可见"发下一个"。`greeting` 若是带 {job_title}/{company} 占位符的模板，每个单位发送
+    前按本岗位实例化（`_render_greeting`，V1.2.28）。
 
     `dry_run=True`（Step 5.3 DRY_RUN 演练）：本单位**只记"将要发送"，不发浏览器、不改状态**
     （不拿锁、不调 apply_batch、不 _mark_greeted）——演练不消耗真实库存/今日额度，返回
@@ -779,6 +800,8 @@ def build_greeting_unit(
     def _unit(i: int) -> dict:
         job = jobs[i - 1]
         url = job["job_url"]
+        # V1.2.28：整批 resolve 的 greeting 可能是带占位符的模板——发送前按本岗位实例化
+        greeting_text = _render_greeting(greeting, job)
         if dry_run:
             # Step 5.3：DRY_RUN 演练——只记"将要发送"，绝不碰浏览器/绝不改状态（不 _mark_greeted）。
             title = job.get("title") or job.get("job_title") or ""
@@ -787,7 +810,7 @@ def build_greeting_unit(
             return {
                 "dry_run": True,
                 "would_send": {
-                    "job_url": url, "title": title, "company": company, "greeting": greeting,
+                    "job_url": url, "title": title, "company": company, "greeting": greeting_text,
                 },
                 "job_url": url,
                 "success": True,
@@ -815,10 +838,10 @@ def build_greeting_unit(
                 "hr_active_label": job.get("hr_active_label", ""),
                 "description": job.get("description") or "",
             }
-            res = runner(automation.apply_batch, jobs=[job_dict], greeting_template=greeting) or []
+            res = runner(automation.apply_batch, jobs=[job_dict], greeting_template=greeting_text) or []
             r = res[0] if res else {"success": False, "message": "apply_batch 无返回"}
             if r.get("success"):
-                _mark_greeted(engine, url, greeting)
+                _mark_greeted(engine, url, greeting_text)
             return {**r, "job_url": url}
         finally:
             flow.release()

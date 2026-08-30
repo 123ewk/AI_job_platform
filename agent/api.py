@@ -25,6 +25,8 @@ from typing import Literal
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.orm import Session as SASession
 
 from agent.executor import TaskExecutor
 from agent.service import (
@@ -33,6 +35,7 @@ from agent.service import (
     ApprovalNotFoundError,
 )
 from db import base as db_base
+from db import models
 
 # ══════════════════════════════════════════════════════════
 #  请求/响应契约
@@ -160,6 +163,12 @@ def _get_executor(request_or_ws) -> TaskExecutor:
     return ex
 
 
+def _executor_engine(ex: TaskExecutor):
+    """执行器关联的 DB engine（fake 执行器没有 _get_engine 时回退全局 engine）。"""
+    getter = getattr(ex, "_get_engine", None)
+    return getter() if getter is not None else db_base.get_engine()
+
+
 # ══════════════════════════════════════════════════════════
 #  路由
 # ══════════════════════════════════════════════════════════
@@ -202,6 +211,34 @@ async def chat(req: ChatRequest, http_request: Request) -> ChatResponse:
     return ChatResponse(**result)
 
 
+@agent_router.get("/api/agent/tasks")
+async def list_agent_tasks(http_request: Request) -> dict:
+    """后台任务列表（最近 30 条，id 倒序）——dashboard 面板刷新/重开后的**状态重建**入口。
+
+    V1.2.28 修复配套：任务卡片此前只由 WS `agent_task_progress/done` 事件创建，页面刷新
+    即丢（正在跑的任务在 UI 上"消失"，用户既看不到进度也没法停）。前端加载时拉本端点，
+    对 pending/running 任务重建卡片（终态任务不重建，历史以 DB 为准）。
+    """
+    ex = _get_executor(http_request)  # 确保执行器已初始化（崩溃恢复先跑）
+    with SASession(_executor_engine(ex)) as s:
+        rows = s.execute(
+            select(models.AgentTask).order_by(models.AgentTask.id.desc()).limit(30)
+        ).scalars().all()
+        tasks = [
+            {
+                "task_id": t.id,
+                "kind": t.kind,
+                "status": t.status,
+                "done": t.progress_done,
+                "total": t.progress_total,
+                "error": t.error,
+                "dry_run": bool((t.params or {}).get("dry_run")),
+            }
+            for t in rows
+        ]
+    return {"tasks": tasks}
+
+
 @agent_router.post("/api/agent/tasks/{task_id}/stop")
 async def stop_agent_task(task_id: int, http_request: Request) -> dict:
     """Step 4.4 用户手动刹车：给后台任务打停止标志（§4.5 刹车柄只在用户手里）。
@@ -211,19 +248,19 @@ async def stop_agent_task(task_id: int, http_request: Request) -> dict:
     任务进入 `stopped` 终态并广播 `agent_task_done`（WS，spec §4.5）——绝不打断正在
     发送的岗位，避免"发送结果未知"状态。
 
-    返回 `accepted=true`（已请求停止，下一步看 WS 终态）/ `false`（任务不存在或已结束）。
+    返回 `accepted=true`（已请求停止，下一步看 WS 终态）/ `false`（任务不在运行中，
+    附当前状态说明——V1.2.28 起拒绝时说明原因，不再让用户猜"点了没反应"）。
     """
     ex = _get_executor(http_request)
     accepted = ex.submit_stop(task_id)
-    return {
-        "task_id": task_id,
-        "accepted": accepted,
-        "message": (
-            "已请求停止：当前岗位发完即停（终态 stopped，见 /ws/agent 广播）"
-            if accepted
-            else "任务不存在或已结束，无需停止"
-        ),
-    }
+    if accepted:
+        message = "已请求停止：当前岗位发完即停（终态 stopped，见 /ws/agent 广播）"
+    else:
+        with SASession(_executor_engine(ex)) as s:
+            row = s.get(models.AgentTask, task_id)
+        current = row.status if row is not None else "不存在"
+        message = f"任务不在运行中（状态：{current}），无需停止"
+    return {"task_id": task_id, "accepted": accepted, "message": message}
 
 
 @agent_router.post("/api/agent/approvals/{approval_id}/decide", response_model=ChatResponse)

@@ -1583,6 +1583,15 @@ td a:hover{color:var(--accent)}
   max-height:160px;
   overflow-y:auto;
 }
+/* V1.2.28 审批卡放大：卡片是 shrink-to-fit（随内容收缩），JSON 短行会把它缩成 ~190px
+   一条——显式给宽度 + 提字号，参数块加高，按钮行独立成行右对齐 */
+.agent-step-card.approval-card{
+  width:min(560px,100%);
+  font-size:13px;
+  padding:14px 16px;
+}
+.approval-card .approval-args{font-size:12px;max-height:240px;margin:10px 0}
+.approval-card .approval-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:2px}
 
 /* ============ Mobile ============ */
 @media(max-width:768px){
@@ -3164,12 +3173,12 @@ function renderAgentTurnResult(d){
   if(d.status==='completed'&&!d.report)agentBubble('（回合完成，无汇报内容）',true);
 }
 function renderApprovalCard(ap){
-  const row=appendAgentRow('<div class="msg-avatar ai-av">AI</div><div class="msg-body"><div class="agent-step-card">'
+  const row=appendAgentRow('<div class="msg-avatar ai-av">AI</div><div class="msg-body"><div class="agent-step-card approval-card">'
     +'<b>🔒 审批确认：'+esc(ap.tool||'?')+'</b>'
-    +'<div class="approval-args">'+esc(JSON.stringify(ap.arguments||{},null,1))+'</div>'
-    +'<div style="display:flex;gap:6px;justify-content:flex-end;">'
-    +'<button class="btn btn-xs btn-success" onclick="decideAgentApproval('+(ap.approval_id||0)+',\'approve\',this)">批准</button>'
-    +'<button class="btn btn-xs btn-danger" onclick="decideAgentApproval('+(ap.approval_id||0)+',\'reject\',this)">拒绝</button>'
+    +'<div class="approval-args">'+esc(JSON.stringify(ap.arguments||{},null,2))+'</div>'
+    +'<div class="approval-actions">'
+    +'<button class="btn btn-sm btn-success" onclick="decideAgentApproval('+(ap.approval_id||0)+',\'approve\',this)">批准</button>'
+    +'<button class="btn btn-sm btn-danger" onclick="decideAgentApproval('+(ap.approval_id||0)+',\'reject\',this)">拒绝</button>'
     +'</div></div></div>','hr');
   row.scrollIntoView&&row.scrollIntoView({block:'end'});
 }
@@ -3178,9 +3187,27 @@ function decideAgentApproval(approvalId,decision,btn){
   card.querySelectorAll('button').forEach(b=>{b.disabled=true;});
   btn.innerHTML='<span class="spinner"></span>';
   fetch('/api/agent/approvals/'+approvalId+'/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision})})
-    .then(r=>r.json())
-    .then(d=>{agentTurnEnd();renderAgentTurnResult(d);})
-    .catch(e=>{agentTurnEnd();agentBubble('⚠ 决策请求失败：'+e.message,true);});
+    .then(async r=>{
+      let d;try{d=await r.json();}catch(_){d=null;}
+      // V1.2.28：审批动作本身已有结果——按钮区立刻换成结果徽标，不再无限转圈
+      //（decide 会原地恢复图续跑一轮 LLM，HTTP 可能十几秒；此前转圈到天荒地老）
+      const actions=card.querySelector('.approval-actions');
+      if(actions){
+        actions.innerHTML=(d&&d.detail)
+          ?'<span style="font-size:12px;color:var(--red,#f87171);">⚠ '+esc(d.detail)+'</span>'
+          :'<span class="badge '+(decision==='approve'?'badge-replied':'badge-skipped')+'">'+(decision==='approve'?'✅ 已批准':'⛔ 已拒绝')+'</span>';
+      }
+      agentTurnEnd();
+      if(!d){agentBubble('⚠ 服务器返回异常响应（HTTP '+r.status+'），请查看后台日志后重试',true);return;}
+      if(d.detail){agentBubble('⚠ '+d.detail,true);return;}
+      renderAgentTurnResult(d);
+    })
+    .catch(e=>{
+      agentTurnEnd();
+      const actions=card.querySelector('.approval-actions');
+      if(actions)actions.innerHTML='<span style="font-size:12px;color:var(--red,#f87171);">⚠ '+esc(e.message)+'</span>';
+      agentBubble('⚠ 决策请求失败：'+e.message,true);
+    });
 }
 
 /* —— 发送指令（audit 默认；ask_user 靠同 thread_id 续会话）—— */
@@ -3229,21 +3256,41 @@ function updateAgentTaskCard(msg,done){
   }
   const pct=msg.total?Math.round((msg.done||0)/msg.total*100):0;
   const statusTxt=done?({completed:'完成',stopped:'已停止',failed:'失败',circuit_open:'连续失败熔断'}[msg.status]||msg.status||'结束'):'进行中';
+  /* V1.2.28：终态徽标分色（完成绿/停止灰/失败红）——此前统一灰 badge，停止成功看不出变化 */
+  const badgeCls=done?({completed:'badge-replied',stopped:'badge-skipped',failed:'badge-failed',circuit_open:'badge-failed'}[msg.status]||'badge-pending'):'badge-pending';
   card.el.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
     +'<b style="font-size:12px;">📤 后台任务 #'+msg.task_id+' · '+esc(msg.kind||'task')+'</b>'
-    +(done?'<span class="badge badge-pending">'+esc(statusTxt)+'</span>'
+    +(done?'<span class="badge '+badgeCls+'">'+esc(statusTxt)+'</span>'
           :'<button class="btn btn-xs btn-danger" onclick="stopAgentTask('+msg.task_id+',this)">停止</button>')
     +'</div>'
     +'<div style="font-size:11.5px;color:var(--text-2);font-family:var(--mono);">'+(msg.done||0)+' / '+(msg.total||'?')+' · '+esc(statusTxt)+(msg.error?' · '+esc(msg.error):'')+'</div>'
     +'<div class="batch-progress"><div class="batch-progress-bar" style="width:'+pct+'%"></div></div>';
-  if(done)setTimeout(()=>{card.el.remove();delete agentTasks[msg.task_id];},8000);
+  if(done){
+    /* V1.2.28：停止/失败的终态卡保留 30s（原 8s 自删——用户一眨眼卡片没了，
+       误以为"点了停止还在跑"）；完成卡维持 8s 防堆积 */
+    const keep=(msg.status==='stopped'||msg.status==='failed'||msg.status==='circuit_open')?30000:8000;
+    setTimeout(()=>{card.el.remove();delete agentTasks[msg.task_id];},keep);
+  }
 }
 function stopAgentTask(taskId,btn){
-  if(btn){btn.disabled=true;btn.innerHTML='<span class="spinner"></span>';}
+  if(btn){btn.disabled=true;btn.innerHTML='<span class="spinner"></span>停止中';}
   fetch('/api/agent/tasks/'+taskId+'/stop',{method:'POST'}).then(r=>r.json()).then(d=>{
-    toast(d.message||'已请求停止','info',3000);
+    /* V1.2.28：文案讲清语义（在途岗位发完即停）+ 拉长 toast，避免"点了没反应"误会 */
+    toast(d.message||'已请求停止','info',6000);
     if(btn&&!d.accepted){btn.disabled=false;btn.textContent='停止';}
   }).catch(()=>{toast('停止请求失败','error');if(btn){btn.disabled=false;btn.textContent='停止';}});
+}
+/* V1.2.28：面板加载/刷新后重建进行中任务卡片（此前卡片只由 WS 事件创建，刷新即丢，
+   正在跑的任务在 UI 上"消失"——既看不到进度也没法停）。终态任务不重建，历史以 DB 为准。 */
+async function loadActiveAgentTasks(){
+  try{
+    const r=await fetch('/api/agent/tasks');if(!r.ok)return;
+    const d=await r.json();
+    (d.tasks||[]).forEach(t=>{
+      if(['completed','failed','stopped','interrupted'].includes(t.status))return;
+      updateAgentTaskCard({task_id:t.task_id,kind:t.kind+(t.dry_run?'·演练':''),done:t.done,total:t.total},false);
+    });
+  }catch(_){/* 任务列表加载失败不打断主流程，WS 事件仍会补卡 */}
 }
 
 /* —— 清空面板（只清 UI，不动会话与后台任务）—— */
@@ -3255,7 +3302,7 @@ function clearAgentPanel(){
 
 /* 启动必须放在脚本末尾：appAllJobs/PLATFORMS/agentWs 等顶层 let/const 声明都在上方，
    提前调用会踩 TDZ 抛 ReferenceError 并中断整个脚本（岗位列表与 Agent 面板同时失效） */
-connectWS();loadSettings();refreshStatus();tickClock();agentWsConnect();
+connectWS();loadSettings();refreshStatus();tickClock();agentWsConnect();loadActiveAgentTasks();
 </script>
 </body>
 </html>

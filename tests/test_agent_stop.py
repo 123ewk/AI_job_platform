@@ -64,11 +64,19 @@ def _terminal(events: list[dict]) -> dict | None:
 
 
 class _RecorderExecutor:
-    """API 端点用的假执行器：记录 submit_stop 调用，已知 task_id 返回 True。"""
+    """API 端点用的假执行器：记录 submit_stop 调用，已知 task_id 返回 True。
 
-    def __init__(self, known: set[int]):
+    V1.2.28 起 stop 端点在拒绝分支会查任务状态（给"任务不在运行中（状态：…）"文案），
+    所以带一个可选 engine（内存库）供端点回查；不传则端点回退全局 engine。
+    """
+
+    def __init__(self, known: set[int], engine=None):
         self.known = known
         self.calls: list[int] = []
+        self._engine = engine
+
+    def _get_engine(self):
+        return self._engine
 
     def submit_stop(self, task_id: int) -> bool:
         self.calls.append(task_id)
@@ -216,15 +224,75 @@ def test_stop_endpoint_relays_to_executor_known_task():
 
 
 def test_stop_endpoint_unknown_task_rejected():
-    ex = _RecorderExecutor(known=set())
+    ex = _RecorderExecutor(known=set(), engine=_engine())  # 空库：任务不存在
     client = _stop_app(ex)
 
     r = client.post("/api/agent/tasks/999/stop")
     assert r.status_code == 200
     body = r.json()
     assert body["accepted"] is False
-    assert "结束" in body["message"] or "不存在" in body["message"]
+    # V1.2.28：拒绝时说明原因（回查了 DB，状态：不存在）——不再让用户猜"点了没反应"
+    assert "不存在" in body["message"] or "结束" in body["message"]
     assert ex.calls == [999]  # 依旧问过一次执行器（提交过一次 stop 判定）
+
+
+def test_stop_endpoint_finished_task_reports_status():
+    """停止一个 DB 里已是终态的任务：accepted=False + 文案带真实状态（不再是含糊的"已结束"）。"""
+    eng = _engine()
+    with SASession(eng) as s:
+        s.add(
+            models.AgentTask(
+                kind="send_greetings", params={}, status=state.TaskStatus.COMPLETED,
+                progress_done=3, progress_total=3,
+            )
+        )
+        s.commit()
+    ex = _RecorderExecutor(known=set(), engine=eng)
+    client = _stop_app(ex)
+
+    r = client.post("/api/agent/tasks/1/stop")
+    body = r.json()
+    assert body["accepted"] is False
+    assert "completed" in body["message"]
+
+
+# ══════════════════════════════════════════════════════════
+#  2.5 任务列表端点（V1.2.28：面板刷新后重建进行中任务卡片）
+# ══════════════════════════════════════════════════════════
+
+
+def test_list_tasks_endpoint_returns_recent_tasks():
+    """GET /api/agent/tasks：最近任务倒序列表（含 dry_run 标记），供前端刷新后重建卡片。"""
+    eng = _engine()
+    ex = TaskExecutor(engine=eng, broadcast=lambda evt: None)
+    app = FastAPI()
+    app.state.agent_executor = ex
+    app.include_router(agent_api.agent_router)
+    client = TestClient(app)
+
+    assert client.get("/api/agent/tasks").json() == {"tasks": []}
+
+    with SASession(eng) as s:
+        s.add(
+            models.AgentTask(
+                kind="send_greetings", params={"dry_run": True, "count": 3},
+                status=state.TaskStatus.RUNNING, progress_done=1, progress_total=3,
+            )
+        )
+        s.add(
+            models.AgentTask(
+                kind="send_greetings", params={}, status=state.TaskStatus.STOPPED,
+                progress_done=2, progress_total=5,
+            )
+        )
+        s.commit()
+
+    tasks = client.get("/api/agent/tasks").json()["tasks"]
+    assert [t["status"] for t in tasks] == ["stopped", "running"]  # id 倒序
+    running = tasks[1]
+    assert running["kind"] == "send_greetings"
+    assert running["done"] == 1 and running["total"] == 3
+    assert running["dry_run"] is True
 
 
 # ══════════════════════════════════════════════════════════
