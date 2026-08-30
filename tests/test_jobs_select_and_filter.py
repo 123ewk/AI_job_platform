@@ -74,7 +74,7 @@ def test_dashboard_has_keyword_filter_and_select_toolbar():
     render_body = html.split("function renderJobs(jobs)")[1].split("function applyOne")[0]
     assert "jobFilterInput" in render_body and "_lastShownJobUrls" in render_body
     # 勾选投递复用既有串行批量（进度条 + 可取消），不走会带 30-90s 间隔的同步 apply-batch
-    assert "doBatchApply(urls,'searchStatus')" in html
+    assert "doBatchApply(applicable,'searchStatus')" in html
 
 
 def test_dashboard_applications_tab_has_same_features():
@@ -90,8 +90,9 @@ def test_dashboard_applications_tab_has_same_features():
     assert "toggleAppCheck" in html and "appChecked=new Set()" in html
     app_body = html.split("function renderAppPage()")[1].split("function loadShortlists")[0]
     assert "appFilterInput" in app_body and "_lastAppPageUrls" in app_body
-    # 勾选投递只投待投递/失败状态（其余跳过），复用串行进度条
+    # 勾选投递只拦"已投递"（applied），其余状态均可再投；复用串行进度条
     assert "doBatchApply(applicable,'applyProgress')" in html
+    assert html.count("status!=='applied'") >= 2  # 搜索页与岗位列表两处同规则
     # 收藏视图数据源不同：清勾选 + 行首占位 td（列对齐）
     short_body = html.split("function loadShortlists()")[1].split("function removeShortlist")[0]
     assert "clearAppChecked()" in short_body and "'<tr><td></td>" in short_body

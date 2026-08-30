@@ -2433,9 +2433,13 @@ function toggleAllJobs(el){
 function applySelectedJobs(btn){
   const urls=[...jobChecked];
   if(!urls.length){toast('先勾选岗位','info');return;}
-  _showPopoverConfirm(btn,'将按顺序投递勾选的 '+urls.length+' 个岗位（沿用每日上限/公司去重/HR 活跃过滤，可中途取消）',function(){
+  // 只拦"已投递"（重复外发）；需回复/已跳过/已过滤/失败等状态按用户要求均可再投
+  const applicable=urls.filter(u=>{const j=currentSearchJobs.find(x=>x.job_url===u);return !(j&&j.status==='applied');});
+  if(!applicable.length){toast('勾选的岗位都已投递过','warning');return;}
+  const skippedN=urls.length-applicable.length;
+  _showPopoverConfirm(btn,'将按顺序投递勾选的 '+applicable.length+' 个岗位'+(skippedN?('（另 '+skippedN+' 个已投递的将跳过）'):'')+'（沿用每日上限/公司去重/HR 活跃过滤，可中途取消）',function(){
     clearJobChecked();
-    doBatchApply(urls,'searchStatus');
+    doBatchApply(applicable,'searchStatus');
   },'投递','btn-success');
 }
 function deleteSelectedJobs(btn){
@@ -2482,11 +2486,11 @@ function toggleAllAppJobs(el){
 function applySelectedAppJobs(btn){
   const urls=[...appChecked];
   if(!urls.length){toast('先勾选岗位','info');return;}
-  // 只投待投递/失败状态的勾选项；已投/需回复等状态自动跳过（后端也有日限/去重兜底）
-  const applicable=urls.filter(u=>{const j=appAllJobs.find(x=>x.job_url===u);return j&&(!j.status||j.status==='pending'||j.status==='failed');});
-  if(!applicable.length){toast('勾选的岗位都不是待投递状态','warning');return;}
+  // 只拦"已投递"（重复外发）；需回复/已跳过/已过滤/失败等状态按用户要求均可再投
+  const applicable=urls.filter(u=>{const j=appAllJobs.find(x=>x.job_url===u);return j&&j.status!=='applied';});
+  if(!applicable.length){toast('勾选的岗位都已投递过','warning');return;}
   const skippedN=urls.length-applicable.length;
-  const desc='将按顺序投递勾选的 '+applicable.length+' 个待投递岗位'+(skippedN?('（另 '+skippedN+' 个非待投递状态将跳过）'):'')+'（沿用每日上限/公司去重/HR 活跃过滤，可中途取消）';
+  const desc='将按顺序投递勾选的 '+applicable.length+' 个岗位'+(skippedN?('（另 '+skippedN+' 个已投递的将跳过）'):'')+'（沿用每日上限/公司去重/HR 活跃过滤，可中途取消）';
   _showPopoverConfirm(btn,desc,function(){
     clearAppChecked();
     doBatchApply(applicable,'applyProgress');
