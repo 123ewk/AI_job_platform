@@ -89,6 +89,19 @@ def test_dashboard_apply_selection_skips_applied_and_filtered_silently():
     assert "勾选的岗位都已投递过" not in html
 
 
+def test_dashboard_batch_apply_stops_on_captcha_and_labels_all_statuses():
+    """批量投递失败不再静默：撞验证码/浏览器未启动立即中止（§铁律：验证码停下等人工）；
+    全部状态都有徽标文案（discovered 等此前显示字面 undefined）。"""
+    html = _html()
+    assert "检测到 BOSS 验证码" in html
+    assert "末次失败" in html
+    assert "lastErr.indexOf('安全检查')>=0||lastErr.indexOf('验证码')>=0" in html
+    assert "lastErr.indexOf('浏览器未启动')>=0" in html
+    # 状态徽标映射补全（两处渲染：搜索卡片 + 岗位列表表格）
+    assert html.count("discovered:'新发现'") == 2
+    assert html.count("greeted:'已打招呼'") == 2
+
+
 def test_dashboard_applications_tab_has_same_features():
     """V1.3.0：岗位列表（applications 表）也有同款过滤 + 勾选投递/删除。"""
     html = _html()

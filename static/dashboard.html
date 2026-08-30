@@ -2318,8 +2318,8 @@ function loadJobs(){fetch('/api/jobs?limit=50').then(r=>r.json()).then(d=>{curre
 function renderJobs(jobs){
   const grid=document.getElementById('jobsGrid');
   if(!jobs||!jobs.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1;"><div class="empty-icon">📭</div>暂无岗位</div>';let fp=document.getElementById('funnelPending');if(fp)animateNumber(fp,sessionSearchPending);animateNumber(document.getElementById('metaJobsJobs')||document.getElementById('metaJobs'),0);window._lastShownJobUrls=[];return;}
-  const sl={pending:'待投递',applied:'已投递',replied:'需要回复',skipped:'已跳过',failed:'失败',filtered:'已过滤',missing_url:'缺少链接'};
-  const sb={pending:'badge-pending',applied:'badge-applied',replied:'badge-replied',skipped:'badge-skipped',failed:'badge-failed',filtered:'badge-filtered',missing_url:'badge-missing_url'};
+  const sl={pending:'待投递',applied:'已投递',replied:'需要回复',skipped:'已跳过',failed:'失败',filtered:'已过滤',missing_url:'缺少链接',discovered:'新发现',greeted:'已打招呼',interview:'面试中',unknown:'结果未知'};
+  const sb={pending:'badge-pending',applied:'badge-applied',replied:'badge-replied',skipped:'badge-skipped',failed:'badge-failed',filtered:'badge-filtered',missing_url:'badge-missing_url',discovered:'badge-pending',greeted:'badge-applied',interview:'badge-replied',unknown:'badge-failed'};
   const inactiveDaysEl=document.getElementById('inactiveDays');
   const inactiveThreshold=inactiveDaysEl?parseInt(inactiveDaysEl.value||'7',10):7;
   // V1.3.0 关键词过滤：前端内存过滤显示（不动 currentSearchJobs，清空输入即恢复全部）
@@ -2580,7 +2580,7 @@ function renderAppPage(){
   const ca=document.getElementById('appCheckAll');
   if(ca)ca.checked=window._lastAppPageUrls.length>0&&window._lastAppPageUrls.every(u=>appChecked.has(u));
   if(!total){tbody.innerHTML='<tr><td colspan="7" class="empty">'+(kw?('没有匹配「'+esc(kw)+'」的记录'):'暂无记录')+'</td></tr>';document.getElementById('appPagination').innerHTML='';window._lastAppPageUrls=[];return;}
-  let sl={pending:'待投递',applied:'已投递',replied:'需要回复',skipped:'已跳过',failed:'失败',filtered:'已过滤'},sb={pending:'badge-pending',applied:'badge-applied',replied:'badge-replied',skipped:'badge-skipped',failed:'badge-failed',filtered:'badge-filtered'};
+  let sl={pending:'待投递',applied:'已投递',replied:'需要回复',skipped:'已跳过',failed:'失败',filtered:'已过滤',discovered:'新发现',greeted:'已打招呼',interview:'面试中',unknown:'结果未知'},sb={pending:'badge-pending',applied:'badge-applied',replied:'badge-replied',skipped:'badge-skipped',failed:'badge-failed',filtered:'badge-filtered',discovered:'badge-pending',greeted:'badge-applied',interview:'badge-replied',unknown:'badge-failed'};
   tbody.innerHTML=page.map(j=>{let s=j.status||'pending';return'<tr><td>'+(j.job_url?'<input type="checkbox" class="app-check" data-url="'+attr(j.job_url)+'" title="勾选后可批量投递/删除" '+(appChecked.has(j.job_url)?'checked':'')+' onclick="toggleAppCheck(this)">':'')+'</td><td><a href="'+attr(j.job_url)+'" target="_blank">'+esc(j.job_title||j.title||'未知')+'</a></td><td>'+esc(j.company||'')+'</td><td>'+esc(j.salary||'')+'</td><td>'+esc(j.city||'')+'</td><td><span class="badge '+sb[s]+'">'+sl[s]+'</span></td><td>'+(j.job_url?'<button class="btn btn-sm btn-primary" onclick="applyOne(\''+attr(j.job_url)+'\',this)">投递</button>':'')+'</td></tr>';}).join('');
   document.getElementById('appPagination').innerHTML='<button '+(appCurrentPage<=1?'disabled':'')+' onclick="appCurrentPage=1;renderAppPage()">«</button><button '+(appCurrentPage<=1?'disabled':'')+' onclick="appCurrentPage--;renderAppPage()">‹</button><span>'+(start+1)+'-'+Math.min(start+APP_PAGE_SIZE,total)+' / '+total+'</span><button '+(appCurrentPage>=totalPages?'disabled':'')+' onclick="appCurrentPage++;renderAppPage()">›</button><button '+(appCurrentPage>=totalPages?'disabled':'')+' onclick="appCurrentPage=appTotalPages;renderAppPage()">»</button>';
 }
@@ -2938,10 +2938,32 @@ async function batchApplyPending(e){
   el.innerHTML='';
 }
 function doBatchApply(urls,elId){
-  let done=0,ok=0,total=urls.length,cancelled=false,el=document.getElementById(elId);
+  let done=0,ok=0,total=urls.length,cancelled=false,lastErr='',el=document.getElementById(elId);
   function up(){if(cancelled)return;let p=Math.round(done/total*100);el.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;"><div style="font-size:13px;font-weight:500;">进度 <span style="color:var(--accent);font-family:var(--mono);">'+done+'</span> / '+total+' <span style="color:var(--text-3);font-weight:400;">('+ok+' 成功)</span></div><button class="btn btn-xs btn-danger" onclick="cancelBatch()">取消</button></div><div class="batch-progress"><div class="batch-progress-bar" style="width:'+p+'%"></div></div><div style="font-size:10.5px;color:var(--text-3);margin-top:6px;text-align:right;font-family:var(--mono);">'+p+'%</div>';}
   window.cancelBatch=function(){cancelled=true;el.innerHTML='<div class="status-banner" style="margin-top:8px;">已取消: '+done+'/'+total+' ('+ok+' 成功)</div>';loadJobs();refreshStatus();if(elId==='applyProgress')loadApplications();toast('已取消批量投递','info');};
-  async function next(i){if(cancelled||i>=total){if(!cancelled){el.innerHTML='<div class="status-banner success" style="margin-top:8px;">完成: '+ok+'/'+total+' 成功</div>';toast('批量完成: '+ok+'/'+total,'success');}loadJobs();refreshStatus();if(elId==='applyProgress')loadApplications();return;}up();try{let r=await fetch('/api/jobs/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_url:urls[i]})}),d=await r.json();if(d.success)ok++;}catch(ex){}done++;next(i+1);}
+  /* 失败不再静默：lastErr 上屏；撞验证码/浏览器未启动立即中止（§铁律：验证码停下等人工） */
+  function finish(){
+    el.innerHTML='<div class="status-banner '+(ok?'success':'')+'" style="margin-top:8px;">完成: '+ok+'/'+total+' 成功'+(lastErr?(' · 末次失败: '+esc(lastErr)):'')+'</div>';
+    toast('批量完成: '+ok+'/'+total,ok?'success':'warning');
+    loadJobs();refreshStatus();if(elId==='applyProgress')loadApplications();
+  }
+  function fatal(msg){
+    cancelled=true;
+    el.innerHTML='<div class="status-banner" style="margin-top:8px;">⚠ '+esc(msg)+'（已完成 '+done+'/'+total+'，成功 '+ok+'）——已停止剩余岗位</div>';
+    toast(msg,'error',6000);
+    loadJobs();refreshStatus();if(elId==='applyProgress')loadApplications();
+  }
+  async function next(i){
+    if(cancelled||i>=total){if(!cancelled)finish();return;}
+    up();
+    try{
+      let r=await fetch('/api/jobs/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_url:urls[i]})}),d=await r.json();
+      if(d.success){ok++;}else{lastErr=(d&&(d.message||d.detail))||('HTTP '+r.status);}
+      if(lastErr&&(lastErr.indexOf('安全检查')>=0||lastErr.indexOf('验证码')>=0)){fatal('检测到 BOSS 验证码，请到自动化浏览器手动完成验证码，稍等几分钟再重试');return;}
+      if(lastErr&&lastErr.indexOf('浏览器未启动')>=0){fatal('自动化浏览器未启动，请先在控制台点「启动浏览器」');return;}
+    }catch(ex){lastErr=ex.message||'网络错误';}
+    done++;next(i+1);
+  }
   next(0);
 }
 function batchSearch(e){
