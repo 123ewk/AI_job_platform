@@ -2078,7 +2078,6 @@ document.addEventListener('click',e=>{
   let b=e.target.closest('[data-action="apply"]');if(b){applyOne(b.dataset.url,b);return;}
   b=e.target.closest('[data-action="skip"]');if(b)skipJob(b.dataset.id);
 });
-connectWS();loadSettings();refreshStatus();tickClock();agentWsConnect();
 
 /* ===== Header clock ===== */
 function tickClock(){
@@ -3244,6 +3243,10 @@ function clearAgentPanel(){
   document.getElementById('agentTaskArea').innerHTML='';
   Object.keys(agentTasks).forEach(k=>delete agentTasks[k]);
 }
+
+/* 启动必须放在脚本末尾：appAllJobs/PLATFORMS/agentWs 等顶层 let/const 声明都在上方，
+   提前调用会踩 TDZ 抛 ReferenceError 并中断整个脚本（岗位列表与 Agent 面板同时失效） */
+connectWS();loadSettings();refreshStatus();tickClock();agentWsConnect();
 </script>
 </body>
 </html>

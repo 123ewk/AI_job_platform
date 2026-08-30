@@ -39,3 +39,11 @@ def test_dashboard_has_execution_mode_and_decide_payload():
     assert "audit" in html and "autonomous" in html
     assert "decideAgentApproval" in html
     assert "approve" in html and "reject" in html
+
+
+def test_dashboard_startup_runs_after_top_level_declarations():
+    # 回归：启动行若在顶层 let/const（appAllJobs/PLATFORMS/agentWs…）声明之前执行，
+    # 会踩 TDZ 抛 ReferenceError 中断整个脚本——岗位列表与 Agent 面板同时失效（0bb73a8 引入）。
+    html = _html()
+    assert html.rindex("agentWsConnect();") > html.index("let agentWs=null")
+    assert html.rindex("agentWsConnect();") > html.index("let appCurrentPage")
