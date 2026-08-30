@@ -259,10 +259,15 @@ def build_agent_graph(*, planner, registry: ToolRegistry, engine, checkpointer=N
     def _plan(st: AgentState) -> dict:
         sid = _ensure_session(engine, st["thread_id"], st.get("user_input", ""), st.get("execution_mode", "audit"))
         trace = list(st.get("trace", []))
-        # L0 隔离（Step 5.2）：首次把用户输入经 <user_input>…</user_input> 数据化注入 trace，
-        # 后续 replan 已有 user 消息即跳过（幂等）——所有 planner 看到正确的"数据非指令"边界。
-        if not any(m.get("role") == "user" for m in trace):
-            trace = [{"role": "user", "content": defense.wrap_user_input(st.get("user_input", ""))}] + trace
+        # L0 隔离（Step 5.2）：用户输入经 <user_input>…</user_input> 数据化注入 trace。
+        # 注入时机（Step 6.3 hotfix）：首轮前置；同 thread 后续轮次（追问 / ask_user 答复）
+        # 输入不在历史里则**追加**——旧逻辑"见 user 消息即跳过"把新一轮输入吞掉，planner
+        # 永远只看到首轮上下文（用户实测：问不同的问题答案不变）。回合内 replan 输入未变，
+        # 依已注入内容幂等跳过。
+        wrapped = defense.wrap_user_input(st.get("user_input", ""))
+        asked = [m.get("content") for m in trace if m.get("role") == "user"]
+        if wrapped not in asked:
+            trace = [{"role": "user", "content": wrapped}] if not asked else trace + [{"role": "user", "content": wrapped}]
         decision = planner(messages=trace, tool_schemas=registry.schemas())
         step_id = _persist_step(engine, sid, state.StepKind.PLAN, llm_decision=decision)
         _notify(state.StepKind.PLAN, step_id=step_id, llm_decision=decision)

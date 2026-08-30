@@ -283,6 +283,72 @@ def test_ask_user_records_step_and_ends(tmp_path):
 
 
 # ──────────────────────────────────────────────────────────
+#  验收 7（Step 6.3 hotfix）：同 thread 多轮——新一轮输入必须进 planner 视野
+# ──────────────────────────────────────────────────────────
+
+
+def test_followup_turn_new_question_reaches_planner(tmp_path):
+    """回归（用户实测：同 thread 追问不同问题，答案永远是首轮的）。
+
+    旧 `_plan` 只在 trace 无 user 消息时注入用户输入（为回合内 replan 幂等设计），
+    同一 thread 第二轮 invoke 的新 user_input 被吞——planner 只看到首轮上下文，
+    问什么都答首轮；ask_user 的用户答复同样进不去。修复后：输入不在历史 user
+    消息里 → 追加到 trace 末尾（回合内 replan 输入未变，依旧幂等跳过）。
+    """
+    eng = _engine(tmp_path)
+    calls_log = []
+    planner = _make_planner(
+        calls_log,
+        {"action": "report", "content": "首轮回答"},
+        {"action": "report", "content": "次轮回答"},
+    )
+    app = graph.build_agent_graph(
+        planner=planner, registry=graph.ToolRegistry(), engine=eng, checkpointer=InMemorySaver()
+    )
+    cfg = {"thread_id": "t-multi", "recursion_limit": graph.DEFAULT_RECURSION_LIMIT}
+
+    out1 = app.invoke(
+        {"thread_id": "t-multi", "user_input": "现在有多少待投递岗位", "execution_mode": "audit"}, config=cfg
+    )
+    out2 = app.invoke(
+        {"thread_id": "t-multi", "user_input": "有哪些会话需要我回复", "execution_mode": "audit"}, config=cfg
+    )
+
+    assert out1["report"] == "首轮回答"
+    assert out2["report"] == "次轮回答"
+    # 第二轮 plan 收到的消息 = 首轮历史 + 本轮新问题（经 <user_input> 包裹）
+    second = calls_log[1]["messages"]
+    assert any(m.get("role") == "user" and "现在有多少待投递岗位" in m.get("content", "") for m in second)
+    assert any(m.get("role") == "user" and "有哪些会话需要我回复" in m.get("content", "") for m in second)
+    # transcript 仍按 session 顺序落库：两轮各一条 plan + report
+    sid = _session_id(eng, "t-multi")
+    assert [s["kind"] for s in _steps(eng, sid)] == ["plan", "report", "plan", "report"]
+
+
+def test_ask_user_answer_reaches_planner_next_turn(tmp_path):
+    """ask_user 续聊：用户答复（新 chat 调用）必须进第二轮 planner 视野。"""
+    eng = _engine(tmp_path)
+    calls_log = []
+    planner = _make_planner(
+        calls_log,
+        {"action": "ask_user", "question": "要投几个岗位？"},
+        {"action": "report", "content": "好的，投 5 个"},
+    )
+    app = graph.build_agent_graph(
+        planner=planner, registry=graph.ToolRegistry(), engine=eng, checkpointer=InMemorySaver()
+    )
+    cfg = {"thread_id": "t-ans", "recursion_limit": graph.DEFAULT_RECURSION_LIMIT}
+    app.invoke({"thread_id": "t-ans", "user_input": "帮我投岗位", "execution_mode": "audit"}, config=cfg)
+    out = app.invoke({"thread_id": "t-ans", "user_input": "投 5 个", "execution_mode": "audit"}, config=cfg)
+
+    assert out["report"] == "好的，投 5 个"
+    second = calls_log[1]["messages"]
+    # 次轮 planner 看到：反问（assistant）→ 用户答复（user）——完整对话链
+    assert second[-1].get("role") == "user"
+    assert "投 5 个" in second[-1]["content"]
+
+
+# ──────────────────────────────────────────────────────────
 #  只读查询小工具
 # ──────────────────────────────────────────────────────────
 
