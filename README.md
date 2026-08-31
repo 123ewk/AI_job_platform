@@ -16,7 +16,7 @@
 [![Web](https://img.shields.io/badge/Web-Dark_UI-8b5cf6?style=for-the-badge)](#-web-控制台)
 [![AI](https://img.shields.io/badge/AI-DeepSeek%20%7C%20OpenRouter%20%7C%20MiMo-3b82f6?style=for-the-badge)](#-ai-模型配置)
 [![Agent](https://img.shields.io/badge/Agent-自然语言操控-10b981?style=for-the-badge)](#-agent-对话层)
-[![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen?style=for-the-badge)](https://github.com/lake121380-source/lakejobai-job-radar/pulls)
+[![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen?style=for-the-badge)](https://github.com/123ewk/AI_job_platform/pulls)
 
 <br>
 
@@ -70,8 +70,8 @@ $ lakejob conversations
 ## 📦 安装
 
 ```bash
-git clone https://github.com/lake121380-source/lakejobai-job-radar.git
-cd lakejobai-job-radar
+git clone https://github.com/123ewk/AI_job_platform.git
+cd AI_job_platform
 pip install -e .              # 含 CLI 入口 lakejob
 playwright install firefox    # 浏览器自动化
 ```
@@ -116,15 +116,17 @@ $ lakejob status                       # 看浏览器+今日统计
 ### 主要功能
 
 - **🔍 岗位搜索** — 60+ 城市分组、薪资/经验/学历/规模/融资阶段多维筛选、福利关键词过滤、批量关键词一行一个
+- **🔎 关键词过滤 + 勾选投递/删除** — 搜索结果与岗位列表均支持关键词实时过滤（岗位名/公司）、卡片/行勾选、全选当前显示页，「投递勾选」走串行进度条（可取消，撞验证码自动刹车），「删除勾选」软删除（默认列表消失、再搜到自动恢复）
 - **🃏 两列卡片视图** — 标题/薪资/公司/城市/状态/HR 活跃度一目了然
   - 🏛 **法人识别**：HR 姓名 == 法人时自动标 `法人直聘`
   - 🏢 公司信息：@公司名 · 规模 · 行业
   - 📍 区域细化：城市 · 区 · 商圈
   - 📝 JD 摘要：前 120 字
   - ⏱ HR 活跃度三色标签（绿/橙/红）
-- **🚀 一键投递 / 翻 5 页** — 进度条带 shimmer 扫光动画，可中途取消
+- **🚀 一键投递 / 翻 5 页** — 进度条带 shimmer 扫光动画，可中途取消；失败原因上屏（末次失败： xxx），撞 BOSS 验证码立即停止整批等人工
 - **📊 投递漏斗** — 待投递 → 已投递 → HR 回复 → 面试 4 步可视化
 - **💬 微信风格聊天** — 头像气泡布局、AI 代发小角标、未读小红点、顶部「我·AI代发」标签右对齐
+- **🤖 Agent 对话面板** — 独立 Tab 用自然语言指挥平台：步骤时间线实时滚动、审计审批卡片（批准/拒绝）、后台任务进度卡片（进度条 + 手动停止）、audit/autonomous 模式切换
 - **🧠 AI 三大智能体**：
   - **岗位分析** — 匹配度百分比 + 关键技能 + 差距建议 + 决策（值得投/谨慎/放弃）+ 风险点 + 建议问题
   - **简历优化** — 核心结论 + JD 核心要求 + 匹配差距 + 关键词 + 项目改写示例 + 立即行动清单
@@ -209,8 +211,10 @@ $ lakejob scan-apply --max-pages 5
 | 功能 | Web | CLI |
 |------|:--:|:--:|
 | 🔍 60+ 城市搜索 + 福利筛选 | ✅ | ✅ |
+| 🔎 关键词筛选 + 勾选批量投递/软删除 | ✅ | — |
 | 🚀 一键批量投递 + 进度条 + 取消 | ✅ | ✅ |
 | 📄 翻页扫描投递（默认 5 页） | ✅ | ✅ |
+| 🤖 Agent 对话面板（自然语言操控 + 审批 + 后台任务） | ✅ | — |
 | 🏢 公司去重（中缀/后缀变体模糊匹配） | ✅ | ✅ |
 | ⏱ HR 活跃度抓取 + 跳过长期不活跃 | ✅ | ✅ |
 | 👤 HR 真实姓名/头衔/活跃度 | ✅ | — |
@@ -322,29 +326,38 @@ ChatResponse  {status: completed | ask_user | pending_approval, report?, approva
 | **审计 audit** | ✅ | 挂起等人工审批 | 每个写工具（改配置 / 打招呼）先返回 `pending_approval`，人工 decide 放行/拒绝；**拒绝 ≠ 终止**，Agent 改道或收尾 |
 | **全权 autonomous** | — | 直接执行 | 写工具直接跑；敏感键 / DRY_RUN 安全开关仍全模式硬拒 |
 
+### Dashboard 面板入口
+
+Web 控制台「🤖 Agent」Tab 即是完整对话客户端：消息气泡 + **步骤时间线**（plan/execute/approval/ask_user/report 实时滚动）+
+**审批卡片**（工具名 + 参数 + 批准/拒绝，decide 后定妆为结果徽标）+ **后台任务卡片**（进度条 + 停止按钮，刷新页面自动重建进行中任务）+
+audit/autonomous 下拉切换。HTTP 响应为唯一内容真源，WS 只推过程事件。
+
 ### 工具（白名单注册制，入参全 Pydantic 校验）
 
 | 工具 | 读写 | 作用 |
 |---|---|---|
 | `query_jobs` | 只读 | 查岗位（`ungreeted=true` 只查可打招呼库存） |
 | `get_progress` | 只读 | 今日已投 / 剩余额度 / 库存计数 / dry_run 标志 |
-| `search_jobs` | 只读（浏览器） | 真实浏览器搜索 → 入库 `discovered`（持 FlowLock 互斥） |
+| `search_jobs` | 只读（浏览器） | 真实浏览器搜索 → 入库 `discovered`（持 FlowLock 互斥；`job_type` 求职类型筛选：全职 1901/实习 1902/兼职 1903，翻页保参） |
 | `get_conversations_summary` | 只读 | 会话概览（"有没有 HR 回我"） |
 | `update_setting` | **写** | 改白名单内配置（`ai_api_key`/`wechat_id`/`dry_run` 仅人工 `/api/settings` 可改） |
-| `send_greetings` | **写** | 提交后台打招呼任务，立即返回 `task_id`，逐岗位后台发送 |
+| `send_greetings` | **写** | 提交后台打招呼任务，立即返回 `task_id`，逐岗位后台发送；`keyword` 参数按岗位名/公司筛选库存——**用户没说关键词 Agent 须先反问**，明确"都投"才可不传 |
 
 ### 安全与工程护栏
 
 - **审批门**：审计写操作 `interrupt()` 挂起 → `POST /api/agent/approvals/{id}/decide`（404 未知 / 409 已处理）；
   挂起会话经 SqliteSaver checkpoint 原地恢复。
 - **后台任务**：状态机 `pending→running→completed|failed|interrupted|stopped`；用户手动刹车
-  `POST /api/agent/tasks/{id}/stop`（当前岗位发完即停）；连续失败熔断（连崩 3 家停整批）。
+  `POST /api/agent/tasks/{id}/stop`（当前岗位发完即停，不可投的已投递/已过滤岗位静默跳过）；
+  连续失败熔断（连崩 3 家停整批）；`GET /api/agent/tasks` 列表供面板刷新后重建进行中任务。
 - **崩溃恢复**：启动时非终态任务标 `interrupted`，在途"结果未知"岗位置 `unknown` 隔离人工确认
   `POST /api/agent/applications/{id}/resolve-unknown`——**无重复发送**。
 - **DRY_RUN 演练**：`dry_run=1` 时打招呼走完整链路但**只记"将要发送"不发浏览器**，可安全重来。
 - **注入防御链 L0–L5**：用户输入/工具输出分隔符隔离 + 注入指纹告警 + 出口过滤；transcript/
   审批/WS 全程脱敏（`sk-…`、`138****8000`）。
 - **WS 进度**：`/ws/agent` 实时收 `agent_step` / `agent_task_progress` / `agent_task_done`。
+- **熔断护栏**：递归上限 30（正常多轮不误熔断、失控即停）；招呼语模板逐岗位实例化（
+  `{job_title}`/`{company}` 绝不把花括号原文发给 HR）。
 
 ### API
 
@@ -353,6 +366,7 @@ ChatResponse  {status: completed | ask_user | pending_approval, report?, approva
 | `POST` | `/api/agent/chat` | 对话回合（`user_input` / `thread_id`? / `execution_mode`?） |
 | `WS` | `/ws/agent` | 步骤进度推送 |
 | `POST` | `/api/agent/approvals/{id}/decide` | 审批放行/拒绝 `{decision: approve\|reject}` |
+| `GET` | `/api/agent/tasks` | 后台任务列表（面板刷新后重建进行中卡片） |
 | `POST` | `/api/agent/tasks/{id}/stop` | 用户手动停止后台任务（非 Agent 工具） |
 | `POST` | `/api/agent/applications/{id}/resolve-unknown` | 「结果未知」岗位人工确认（非 Agent 工具） |
 
@@ -378,9 +392,10 @@ ChatResponse  {status: completed | ask_user | pending_approval, report?, approva
 ├── static/dashboard.html    # Web 前端 (单文件 SPA)
 ├── interview/               # 面试问答子模块
 ├── agent/                   # Agent 对话层（自然语言操控）
-│   ├── api.py               # /api/agent/chat + /ws/agent + decide/stop/resolve-unknown
+│   ├── api.py               # /api/agent/chat + /ws/agent + decide/stop/tasks/列表
 │   ├── service.py           # AgentService 编排（chat/decide + SqliteSaver 恢复）
 │   ├── graph.py             # LangGraph 决策图（plan→approval_gate→execute→report）
+│   ├── planner.py           # 真 LLM planner（DeepSeek function-calling + 操作规则）
 │   ├── tools.py             # 工具工厂（query_jobs/search_jobs/update_setting/send_greetings…）
 │   ├── state.py             # Agent 状态机常量 + 配置白名单 + 脱敏
 │   ├── executor.py          # 后台任务执行器（TaskExecutor + 停止 + 熔断）
@@ -390,7 +405,8 @@ ChatResponse  {status: completed | ask_user | pending_approval, report?, approva
 │   └── log_config.py        # 结构化日志 + 脱敏
 ├── db/                      # SQLAlchemy 数据层 + Alembic + 存量迁移
 ├── docs/                    # 设计文档
-│   └── AGENT_USAGE.md       # Agent 对话层使用指南
+│   ├── AGENT_USAGE.md       # Agent 对话层使用指南
+│   └── AI_job_platform_Agent化改造SDD_V1.0.md  # Agent 化改造设计文档（变更记录到 V1.3.0）
 ├── SKILL.md                 # Agent 集成指南
 ├── CHANGELOG.md             # 版本变更
 ├── CHANGES.md               # 优化变更说明
@@ -412,6 +428,7 @@ ChatResponse  {status: completed | ask_user | pending_approval, report?, approva
 | `GET` | `/api/jobs` | 岗位列表（支持 `?status=&limit=`） |
 | `POST` | `/api/jobs/apply` | 投递单个 |
 | `POST` | `/api/jobs/apply-batch` | 批量投递待投递 |
+| `POST` | `/api/jobs/delete-batch` | 批量删除（勾选，软删置 `filtered`，可恢复） |
 | `POST` | `/api/jobs/scan-and-apply` | 翻页扫描投递 |
 | `POST` | `/api/jobs/{id}/skip` | 跳过 |
 | `POST` | `/api/jobs/analyze` | AI JD 分析（带 decision/risks） |
@@ -501,6 +518,8 @@ lakejob status             # 浏览器运行状态
 | 登录过期 | Web 设置页点「重新扫码登录」 |
 | 搜索返回 500 | 浏览器未启动，先去设置页启动 |
 | 搜索触发风控（code 37） | 浏览器内 fetch 已自动带 cookie；如仍触发，浏览器手动完成安全验证 |
+| 批量投递撞验证码 | 进度条会**自动停止**剩余岗位并提示——到自动化浏览器手动完成验证码，稍等几分钟再重试（切勿硬撞加重风控） |
+| 勾选投递提示"没有可投" | 勾选的岗位全是「已投递/已过滤」状态（这两种按规则跳过）；换成待投递/需回复等状态再投 |
 | 卡片不显示法人 | 搜索后批量补抓逻辑已加；详情 API 中无 `legalPerson` 时会尝试公司页抓取 |
 | AI 不回复 | 检查设置页 AI Key 是否保存 / Base URL 是否可访问 |
 | HR 要简历无法自动点击 | `send_resume` 已改用 `innerText` 精确匹配 + 多重兜底 |
@@ -559,11 +578,12 @@ lakejob status             # 浏览器运行状态
 
 ## 📋 版本与已知限制
 
-当前版本（v4.1）：
-- 后端：完整支持 3 个 AI 端点（`/api/jobs/analyze`、`/api/jobs/optimize-resume`、`/api/jobs/chat-suggestion`），均带 24h DB 缓存
-- 前端 dashboard.html：合并 PR #3 后整体重写，**「简历优化」「沟通建议」弹窗 UI 暂未对接**，需自行调用 API 或后续补回
-- `boss_geo.py`（中文区名→BOSS code 映射）保留但未被搜索流程引用（PR 端用前端直接传 code 的新方式）
-- 详见 [CHANGELOG.md](CHANGELOG.md) 的 v4.1 节
+当前 Agent 化改造主线（V1.3.0，设计文档见 [docs/AI_job_platform_Agent化改造SDD_V1.0.md](docs/AI_job_platform_Agent化改造SDD_V1.0.md)）：
+- **Agent 对话层**：LangGraph 决策环 + 真 LLM planner（DeepSeek/OpenRouter 兼容）→ 查库存 / 搜岗位（含求职类型）/ 会话概览 / 改配置 / 按关键词打招呼，审计写操作过审批门，后台长任务带进度/停止/熔断/崩溃恢复
+- **手动投递增强**：搜索结果与岗位列表的关键词筛选 + 勾选投递/软删除；批量投递撞验证码自动刹车
+- **安全护栏**：审批门 / DRY_RUN / 注入防御 L0–L5 / 递归熔断 / 敏感键硬拒 / 输出脱敏
+- **限制**：Agent 的关键词反问依赖 LLM 遵守规则（软约束）；BOSS 风控敏感时自动化投递可能频繁撞验证码——此时按提示手动过验证、降频投递，勿硬撞
+- 历史版本与逐条变更见 [CHANGELOG.md](CHANGELOG.md)
 
 ---
 
