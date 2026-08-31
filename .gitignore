@@ -37,3 +37,6 @@ secrets/
 
 # Private interview prep bank (local-only, never push to GitHub)
 docs/INTERVIEW_QUESTIONS.md
+
+# probe_resume_dialog.py 取证产物（本地）
+probe_resume_dialog_result.json

@@ -97,10 +97,12 @@ SELECTORS = {
         'span:has-text("发简历")',
     ],
     "resume_confirm_btn": [
-        ".btn-sure-v2.btn-confirm",
-        ".choose-resume-dialog .btn-confirm",
-        'button:has-text("发送")',
-        '.boss-popup__content button:has-text("发送")',
+        # 2026-08 实测 DOM（probe_resume_dialog.py 取证）：确认键是简历选择浮层
+        # div.panel-resume.sentence-popover 里的 span.btn-v2.btn-sure-v2（文本"确定"）。
+        # 注意：聊天输入框自己的发送键是 button.btn-v2.btn-sure-v2.btn-send（disabled 常驻），
+        # 旧兜底 button:has-text("发送") 会误匹配它 —— 点了没反应却当成功，简历从未发出。
+        ".panel-resume .btn-sure-v2",
+        ".btn-sure-v2:not(.btn-send)",
     ],
     "wechat_share_btn": [
         ".btn-weixin",
@@ -1461,26 +1463,41 @@ class BossAutomation(BossScraper):
             return False
 
     def send_resume(self) -> bool:
-        """点击「发简历」按钮，等弹窗后点「发送」确认。"""
+        """点击「发简历」按钮，等简历选择浮层出现后点「确定」。
+
+        三道闸（缺一不可，任何一道不过都返回 False 让下轮重试）：
+        1. 按钮带 unable 类 = "求简历：双方回复后可用"未解锁，点了也没反应；
+        2. 确认键必须来自 .panel-resume 浮层（排除聊天输入框自己的 disabled 发送键）；
+        3. 找不到确认键绝不报成功 —— 旧逻辑"无弹窗直接完成"会把没发出去记成已发，永不重试。
+        """
         try:
             btn = self._find_element(SELECTORS["resume_attach_btn"], timeout_ms=5000)
             if not btn:
                 print("  ⚠️ send_resume: 未找到发简历按钮")
                 return False
+            btn_cls = ""
+            try:
+                btn_cls = btn.evaluate("el => el.className.toString()") or ""
+            except Exception:
+                pass
+            if "unable" in btn_cls:
+                print("  [发简历] 按钮不可用（双方还没互回复过），本轮跳过")
+                return False
             btn.click()
             print("  [发简历] 已点击发简历按钮")
             pause(1, 2)
 
-            # 等弹窗出现 → 点「发送」按钮
             confirm = self._find_element(SELECTORS["resume_confirm_btn"], timeout_ms=5000)
-            if confirm:
-                confirm.click()
-                pause(0.5, 1)
-                print("  [发简历] 已点发送按钮")
-                return True
-
-            # 兜底：无弹窗但已点击
-            print("  [发简历] 无弹窗，直接完成")
+            if not confirm:
+                print("  ⚠️ send_resume: 简历选择浮层/确定按钮没出现（可能无附件简历），视为失败，下轮可重试")
+                try:
+                    self.page.keyboard.press("Escape")  # 收起可能挂着的浮层，别挡住后续输入框
+                except Exception:
+                    pass
+                return False
+            confirm.click()
+            pause(0.5, 1)
+            print("  [发简历] 已点确定按钮，简历发送完成")
             return True
         except Exception as e:
             print(f"  ⚠️ send_resume 失败: {e}")
