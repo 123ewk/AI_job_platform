@@ -45,6 +45,15 @@ def friendly_error(e: BaseException) -> str:
             "页面操作超时（网站加载慢，或浏览器里弹出了验证码/滑块在等人工处理）。"
             "请切到浏览器窗口看一眼，若有验证码先手动完成，再重试。"
         )
+    # 线程身份失效：boss_firefox.BrowserThreadMismatchError，消息本身已是完整中文指引，直接透传
+    if name == "BrowserThreadMismatchError":
+        return _first_line(msg) or "浏览器对象已失效，请重启服务进程后再试。"
+    # greenlet 跨线程调用：绕过 _run_pw 桥直接摸 Playwright 对象才会撞上的英文原始报错
+    if "switch to a different thread" in msg:
+        return (
+            "浏览器操作跑错了线程（Playwright 对象只能在创建它的线程使用）。"
+            "请重启服务进程恢复；若反复出现，说明有代码绕过了 pw 单线程桥，需要检查改动。"
+        )
     detail = _first_line(msg)
     if name == "Error" and detail:
         # Playwright 基类错误的类名没有信息量，直接展示消息首行

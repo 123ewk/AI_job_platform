@@ -20,6 +20,7 @@ import os
 import random
 import re
 import sys
+import threading
 import time
 import logging
 from collections import Counter, defaultdict
@@ -455,11 +456,35 @@ def parse_hr_active(text: str) -> dict:
 log = logging.getLogger(__name__)
 
 
+class BrowserThreadMismatchError(RuntimeError):
+    """Playwright sync 对象绑创建线程；当前线程与创建线程不一致时抛出。"""
+
+
 class BossScraper:
     def __init__(self, headless=False):
         self.headless = headless
         self._pw = self._br = self._ctx = None
         self.page = None
+        # start() 成功后盖上创建线程 id；_ensure_same_thread 靠它拦截跨线程操作
+        self._pw_thread_id: Optional[int] = None
+
+    def _ensure_same_thread(self):
+        """线程身份变了 → 浏览器对象已整体失效，宁可明确报错也不能盲操作。
+
+        正常情况下所有浏览器操作都经 boss_app._run_pw 落在同一个 pw 单线程
+        （ThreadPoolExecutor worker 不因任务异常被替换，executor 也从不
+        shutdown），这个不变量由进程结构保证；此检测是给未来重构破坏它时的
+        兜底——否则跨线程调用只会得到一句 greenlet 英文报错或干脆挂死。
+        """
+        tid = threading.get_ident()
+        if self._pw_thread_id is not None and self._pw_thread_id != tid:
+            raise BrowserThreadMismatchError(
+                f"浏览器对象绑定在旧线程({hex(self._pw_thread_id)})上，当前线程"
+                f"({hex(tid)})已无法操作它（Playwright sync 对象只能在创建线程使用）。"
+                "这通常意味着浏览器线程池被重建，旧浏览器对象已整体失效。"
+                "请重启服务进程恢复（python boss_app.py --port 8010）——"
+                "登录态在本地 profile 里，重启后在控制台再启动即可，无需重新扫码。"
+            )
 
     def start(self):
         self._pw = sync_playwright().start()
@@ -490,8 +515,10 @@ class BossScraper:
         self._ctx.add_init_script(ANTI_DETECT)
         self.page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
         self.page.set_default_timeout(30000)
+        self._pw_thread_id = threading.get_ident()
 
     def close(self):
+        self._ensure_same_thread()
         if self._ctx:
             try:
                 self._ctx.close()

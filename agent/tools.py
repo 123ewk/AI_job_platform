@@ -797,7 +797,14 @@ def open_browser_factory(
             try:
                 runner(cur.heartbeat)
                 return {"error": None, "status": "already_running", "message": "浏览器已经在运行，无需重复开启"}
-            except Exception:
+            except Exception as e:
+                from boss_firefox import BrowserThreadMismatchError  # noqa: PLC0415
+
+                if isinstance(e, BrowserThreadMismatchError):
+                    # 旧对象绑在旧线程上：close 同样跨线程做不掉，旧 Firefox 进程还活着
+                    # 并占着 profile 锁——此刻重开必撞 parent.lock 挂死。拒绝自动重建，
+                    # 把恢复权交还给人（重启服务进程）。
+                    return {"error": "浏览器线程失效", "message": str(e)}
                 try:
                     runner(cur.close)
                 except Exception:

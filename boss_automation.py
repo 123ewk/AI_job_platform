@@ -257,6 +257,8 @@ class BossAutomation(BossScraper):
 
     def heartbeat(self) -> bool:
         """心跳: 只检查当前页面登录状态，不主动跳转。"""
+        # 必须在 try 外：线程失效 ≠ 登录过期，吞成 False 会被当成 session_expired 误报
+        self._ensure_same_thread()
         try:
             return self.check_logged_in()
         except Exception:
@@ -264,6 +266,7 @@ class BossAutomation(BossScraper):
 
     def keep_alive(self):
         """主动保活: 在聊天页保持 BOSS session 活跃。已登录时用轻量操作代替完整刷新。"""
+        self._ensure_same_thread()
         try:
             current_url = self.page.url
             need_navigate = "/web/geek/chat" not in current_url
