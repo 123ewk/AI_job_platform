@@ -28,13 +28,14 @@ builtins.print = _ts_print
 
 # 下方 db.backend import 必须置于 boss_replier 之前——boss_replier 导入时
 # sys.path.insert(interview) 会劫持顶层 `db` 包；待 Step 1.3 Commit4 归位 boss_replier 后恢复字典序。
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect  # noqa: E402, I001
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect  # noqa: E402, I001
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
-from fastapi.responses import HTMLResponse  # noqa: E402
+from fastapi.responses import HTMLResponse, JSONResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 from agent.api import agent_router as _agent_api_router  # noqa: E402, I001  # Agent 对话 API（Step 2.4）
+from agent.errors import friendly_error  # noqa: E402, I001  # 异常 → 中文文案（全局 500 兜底）
 from agent.flow_lock import default_flow_lock as flow_lock  # noqa: E402, I001  # §4.6 浏览器互斥锁（Step 3.3）
 
 from db.backend import (  # noqa: E402, I001  # 必须先于 boss_replier：其 import 时 sys.path.insert(interview) 会劫持 `db` 包
@@ -85,6 +86,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def _friendly_500_handler(request: Request, exc: Exception):
+    """全局 500 兜底：端点未捕获的异常回中文 JSON（{"detail": ...}），不再是纯文本
+    "Internal Server Error"。堆栈仍由 uvicorn 照常记入后台日志，排障不受影响。"""
+    return JSONResponse(status_code=500, content={"detail": f"出错了：{friendly_error(exc)}"})
 
 static_dir = Path(__file__).parent / "static"
 static_dir.mkdir(parents=True, exist_ok=True)

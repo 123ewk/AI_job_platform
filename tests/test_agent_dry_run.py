@@ -128,6 +128,7 @@ class _FakeRunner:
 
 class _Automation:
     apply_batch = None  # runner 忽略 fn；仅需属性存在
+    page = object()  # 浏览器预检（graph execute 前）按"page 在=已启动"判定，与生产一致
 
 
 def _tool(eng, *, executor=None, runner=None, flow=None, paused=False):

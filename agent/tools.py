@@ -404,6 +404,20 @@ def _default_get_automation() -> Any:
     return getattr(live_boss_app(), "automation", None)
 
 
+def _ready_probe(loader: Callable[[], Any]) -> Callable[[], bool]:
+    """由（注入的）loader 构造就绪探针：automation 与 page 都在才算就绪。
+
+    只查对象存在性、不跨线程调 Playwright 方法（预检必须零成本）；窗口被关但
+    对象还在的场景交给工具运行时异常 + friendly_error 兜底。
+    """
+
+    def ready() -> bool:
+        a = loader()
+        return a is not None and getattr(a, "page", None) is not None
+
+    return ready
+
+
 def _search_page_n(automation, keyword: str, city_code: str, page: int, job_type: str | None = None) -> list[dict]:
     """翻到搜索第 N 页并提取岗位卡片（整段在 pw 线程里执行）。
 
@@ -665,13 +679,17 @@ def build_browser_tools(
     lock: FlowLock | None = None,
     get_automation: Callable[[], Any] | None = None,
     pw_runner: Callable[..., Any] | None = None,
+    set_automation: Callable[[Any], None] | None = None,
+    start_browser: Callable[[], Any] | None = None,
 ) -> ToolRegistry:
-    """注册 search_jobs + get_conversations_summary 到 registry（缺省新建）。
+    """注册 search_jobs + get_conversations_summary + open/close_browser 到 registry（缺省新建）。
 
     - `search_jobs` 是"读浏览器"工具（§4.2 分类）→ write=False，audit 直放；持有
-      FlowLock 互斥（§4.6），锁被占时排队而非并发。
+      FlowLock 互斥（§4.6），锁被占时排队而非并发；`requires_browser=True`（execute 前
+      预检浏览器，未启动秒返引导报错）。
     - `get_conversations_summary` 纯本地镜像库只读，不碰浏览器、不拿锁。
-    `lock/get_automation/pw_runner` 透传给 search_jobs_factory（测试注入）。
+    - `open_browser` / `close_browser` 浏览器生命周期工具（自愈用），write=False。
+    `lock/get_automation/pw_runner/set_automation/start_browser` 透传给各 factory（测试注入）。
     """
     reg = registry or ToolRegistry()
     reg.register(
@@ -688,6 +706,8 @@ def build_browser_tools(
             SearchJobsParams,
         ),
         write=False,
+        requires_browser=True,
+        browser_ready=_ready_probe(get_automation or _default_get_automation),
     )
     reg.register(
         "get_conversations_summary",
@@ -696,7 +716,134 @@ def build_browser_tools(
         schema=build_tool_schema("get_conversations_summary", "查会话概览（只读）", ConversationsSummaryParams),
         write=False,
     )
+    reg.register(
+        "open_browser",
+        func=open_browser_factory(
+            get_automation=get_automation,
+            pw_runner=pw_runner,
+            start_browser=start_browser,
+            set_automation=set_automation,
+        ),
+        description=(
+            "启动自动化浏览器（幂等：已在运行就直接返回，窗口被手动关掉时会自动重开）。"
+            "收到「浏览器未启动」类 error 后先用本工具恢复，再原样重试原工具"
+        ),
+        schema=build_tool_schema("open_browser", "启动自动化浏览器（幂等，无参数）", BrowserLifecycleParams),
+        write=False,
+    )
+    reg.register(
+        "close_browser",
+        func=close_browser_factory(
+            get_automation=get_automation, pw_runner=pw_runner, set_automation=set_automation, lock=lock
+        ),
+        description=(
+            "关闭自动化浏览器释放资源（幂等：未启动时直接返回）。有任务正在用浏览器时会被拒绝；"
+            "关闭后聊天监控会自动停止，需要时再 open_browser 或在控制台重启"
+        ),
+        schema=build_tool_schema("close_browser", "关闭自动化浏览器（幂等，无参数）", BrowserLifecycleParams),
+        write=False,
+    )
     return reg
+
+
+# ══════════════════════════════════════════════════════════
+#  浏览器生命周期工具（open_browser / close_browser，自愈用）
+# ══════════════════════════════════════════════════════════
+
+
+class BrowserLifecycleParams(BaseModel):
+    """open_browser / close_browser 不需要参数（占位 schema 用）。"""
+
+
+def _new_automation() -> Any:
+    """真正的启动动作（必须在 pw 单线程里执行：Playwright sync 对象绑创建线程）。"""
+    from boss_automation import BossAutomation  # noqa: PLC0415
+
+    a = BossAutomation(headless=False)
+    a.start()
+    return a
+
+
+def _default_set_automation(a: Any) -> None:
+    """启动/关闭后回写 boss_app 全局 automation（经 live 模块，防影子副本 V1.2.26）。"""
+    setattr(live_boss_app(), "automation", a)
+
+
+def open_browser_factory(
+    *,
+    get_automation: Callable[[], Any] | None = None,
+    pw_runner: Callable[..., Any] | None = None,
+    start_browser: Callable[[], Any] | None = None,
+    set_automation: Callable[[Any], None] | None = None,
+) -> Callable[..., dict]:
+    """构造 `open_browser(**kwargs) -> dict`：启动自动化浏览器（幂等 + 自愈）。
+
+    - 已在运行（对象存在且 page 在）→ 心跳探针确认后原样返回，不重复开；
+    - 探针失败（窗口被手动关掉等）→ 先收尾旧对象再重开——这是"浏览器被关但对象
+      还在"场景的自愈路径，预检（graph 侧）对它是放行的；
+    - 未启动 → pw 单线程里 BossAutomation(headless=False).start()（启动必须与后续
+      浏览器操作同线程，V1.2.26 教训），成功后回写 boss_app 全局。
+
+    测试注入：`get_automation/pw_runner/start_browser/set_automation` 全部可替换。
+    """
+    loader = get_automation or _default_get_automation
+    runner = pw_runner or _default_pw_runner
+    starter = start_browser or _new_automation
+    setter = set_automation or _default_set_automation
+
+    def open_browser(**kwargs: Any) -> dict:
+        cur = loader()
+        if cur is not None and getattr(cur, "page", None) is not None:
+            try:
+                runner(cur.heartbeat)
+                return {"error": None, "status": "already_running", "message": "浏览器已经在运行，无需重复开启"}
+            except Exception:
+                try:
+                    runner(cur.close)
+                except Exception:
+                    pass
+        automation = runner(starter)
+        setter(automation)
+        return {
+            "error": None,
+            "status": "started",
+            "message": "浏览器已启动（登录态自动恢复）。若此前聊天监控已停止，请在控制台重启一次监控",
+        }
+
+    return open_browser
+
+
+def close_browser_factory(
+    *,
+    get_automation: Callable[[], Any] | None = None,
+    pw_runner: Callable[..., Any] | None = None,
+    set_automation: Callable[[Any], None] | None = None,
+    lock: FlowLock | None = None,
+) -> Callable[..., dict]:
+    """构造 `close_browser(**kwargs) -> dict`：关闭自动化浏览器（幂等 + 护栏）。
+
+    护栏：FlowLock 被占（搜索/发招呼任务进行中）→ 拒绝关闭，等任务结束再关。
+    """
+    loader = get_automation or _default_get_automation
+    runner = pw_runner or _default_pw_runner
+    setter = set_automation or _default_set_automation
+    flow = lock if lock is not None else default_flow_lock
+
+    def close_browser(**kwargs: Any) -> dict:
+        cur = loader()
+        if cur is None or getattr(cur, "page", None) is None:
+            return {"error": None, "status": "not_running", "message": "浏览器本来就未启动，无需关闭"}
+        if flow.locked():
+            return {"error": "浏览器忙", "message": "有任务正在使用浏览器（搜索/发招呼进行中），等任务结束后再关闭"}
+        runner(cur.close)
+        setter(None)
+        return {
+            "error": None,
+            "status": "closed",
+            "message": "浏览器已关闭。聊天监控会在心跳失败后自动停止；需要时再 open_browser 或在控制台重启",
+        }
+
+    return close_browser
 
 
 # ══════════════════════════════════════════════════════════
@@ -1015,6 +1162,8 @@ def build_send_tools(
         ),
         schema=build_tool_schema("send_greetings", "给未打招呼岗位发招呼语（后台长任务，可按关键词筛选库存）", SendGreetingsParams),
         write=True,
+        requires_browser=True,
+        browser_ready=_ready_probe(get_automation or _default_get_automation),
     )
     return reg
 
@@ -1026,6 +1175,9 @@ __all__ = [
     "SearchJobsParams",
     "ConversationsSummaryParams",
     "SendGreetingsParams",
+    "BrowserLifecycleParams",
+    "open_browser_factory",
+    "close_browser_factory",
     "query_jobs_factory",
     "get_progress_factory",
     "update_setting_factory",

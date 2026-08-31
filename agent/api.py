@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session as SASession
 
+from agent.errors import friendly_error
 from agent.executor import TaskExecutor
 from agent.service import (
     AgentService,
@@ -202,7 +203,7 @@ async def chat(req: ChatRequest, http_request: Request) -> ChatResponse:
             content={
                 "thread_id": thread_id,
                 "session_id": None,
-                "report": f"⚠ 服务器内部错误（已记入后台日志）：{e}",
+                "report": f"⚠ 出错了：{friendly_error(e)}（技术详情已记录到后台日志）",
                 "ask_user_question": None,
                 "status": "completed",
             },

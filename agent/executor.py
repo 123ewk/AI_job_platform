@@ -40,6 +40,7 @@ from typing import Any, Callable
 
 from sqlalchemy.orm import Session as SASession
 
+from agent.errors import friendly_error
 from agent.state import TaskStatus, can_transition
 from db import base as db_base
 from db import models
@@ -230,12 +231,12 @@ class TaskExecutor:
                         # fail-fast（默认）或 达熔断阈值 → 整任务 failed，剩余单位不再跑
                         status = TaskStatus.FAILED
                         if consecutive_fail_threshold is None:
-                            error = str(last_exc)
+                            error = friendly_error(last_exc)
                             logger.warning("agent_task=%s 单位 %s 失败 → failed（fail-fast）", task_id, i)
                         else:
                             error = (
                                 f"连续失败熔断：连续 {consecutive_fails} 个岗位发送失败，"
-                                f"已停止剩余单位（末因 {last_exc}）"
+                                f"已停止剩余单位（末因：{friendly_error(last_exc)}）"
                             )
                             logger.warning("agent_task=%s 连续失败熔断（%s/%s）", task_id, consecutive_fails, consecutive_fail_threshold)
                         break
@@ -250,7 +251,7 @@ class TaskExecutor:
                 self._persist_and_broadcast_progress(engine, task_id, kind, total, done)
         except Exception as exc:  # noqa: BLE001 —— 非单位异常（如进度落库失败）记 failed，不打死执行器
             status = TaskStatus.FAILED
-            error = str(exc)
+            error = friendly_error(exc)
             logger.exception("agent_task=%s 单位执行失败", task_id)
         finally:
             with SASession(engine) as s:

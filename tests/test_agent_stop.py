@@ -201,7 +201,7 @@ def test_default_still_fail_fast_on_first_exception():
     # 默认 None：首个异常即 failed，error 是异常原文（不含"熔断"措辞）→ 既有 4.1 行为不破
     row = result["row"]
     assert row.status == state.TaskStatus.FAILED
-    assert row.error == "模拟浏览器发送失败"
+    assert "模拟浏览器发送失败" in row.error  # V1.3.1：error 经 friendly_error 翻译，保留异常首行
     assert "熔断" not in (row.error or "")
     assert row.progress_done == 1
 

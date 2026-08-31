@@ -183,7 +183,7 @@ def test_executor_failed_on_unit_exception():
 
     row = result["row"]
     assert row.status == state.TaskStatus.FAILED
-    assert row.error == "模拟浏览器发送失败"
+    assert "模拟浏览器发送失败" in row.error  # V1.3.1：error 经 friendly_error 翻译，保留异常首行
     # 第 1 个单位完成，第 2 个炸了 → progress_done 停在 1
     assert row.progress_done == 1
     assert row.finished_at is not None
@@ -191,7 +191,7 @@ def test_executor_failed_on_unit_exception():
     t = _terminal(result["events"])
     assert t is not None
     assert t["status"] == state.TaskStatus.FAILED
-    assert t["error"] == "模拟浏览器发送失败"
+    assert "模拟浏览器发送失败" in t["error"]  # V1.3.1：error 经 friendly_error 翻译，保留异常首行
 
 
 # ══════════════════════════════════════════════════════════

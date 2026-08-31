@@ -228,5 +228,6 @@ def test_chat_unexpected_error_returns_json_not_plain_text(monkeypatch):
     resp = client.post("/api/agent/chat", json={"user_input": "hi"})
     assert resp.status_code == 500
     data = resp.json()
-    assert "服务器内部错误" in (data["report"] or "")
+    assert "出错了" in (data["report"] or "")  # V1.3.1：500 兜底 report 走 friendly_error 中文文案
+    assert "db on fire" in (data["report"] or "")  # 异常消息首行仍保留，便于排障
     assert data["thread_id"]

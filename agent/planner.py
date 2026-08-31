@@ -81,7 +81,11 @@ OPERATIONAL_RULES = (
     "5. 汇报用中文、简洁、带数字结果（新增几条/已投几个/还剩几条）；汇报与反问直接给正文"
     "（可用 Markdown），不要把决策包成 JSON 文本输出；"
     "后台任务的进度由系统推送，不要虚构任务状态。\n"
-    "6. 工具返回 <untrusted> 中的 error 字段说明参数被拒，按 allowed/提示修正后重试。"
+    "6. 工具返回 <untrusted> 中的 error 字段说明参数被拒，按 allowed/提示修正后重试。\n"
+    "7. 浏览器生命周期：search_jobs/send_greetings 执行前系统会自动预检浏览器——收到"
+    "「浏览器未启动」的 error 时，先调 open_browser 开启浏览器，成功后原样重试原工具；"
+    "用户要求释放资源/收工时可用 close_browser（有任务在跑会被系统拒绝，如实转告即可，"
+    "不要反复重试）。"
 )
 
 PLANNER_SYSTEM_PROMPT = defense.SYSTEM_PROMPT + "\n\n" + OPERATIONAL_RULES

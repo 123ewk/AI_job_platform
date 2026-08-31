@@ -31,6 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session as SASession
 
 from agent import defense, state
+from agent.errors import friendly_error
 from db import models
 
 # §4.1 熔断：替代手写 max_steps。V1.2.27：12→30——LangGraph 按节点计步（plan+execute 各一步），
@@ -65,13 +66,19 @@ class AgentState(TypedDict, total=False):
 
 
 class _Tool:
-    __slots__ = ("name", "func", "schema", "write")
+    __slots__ = ("name", "func", "schema", "write", "requires_browser", "browser_ready")
 
-    def __init__(self, name: str, func, schema: dict, write: bool):
+    def __init__(self, name: str, func, schema: dict, write: bool, requires_browser: bool = False, browser_ready=None):
         self.name = name
         self.func = func
         self.schema = schema
         self.write = write
+        # 浏览器预检标记：True 的工具在 execute 前先查浏览器是否启动，未启动秒返
+        # 可自愈的引导报错（引导 planner 调 open_browser），不真进工具撞 TargetClosedError
+        self.requires_browser = requires_browser
+        # 就绪探针（缺省用 _browser_ready 兜底）：必须与工具注入的 get_automation 同源，
+        # 否则测试/自定义装配注入的 loader 会被预检绕过
+        self.browser_ready = browser_ready
 
 
 class ToolRegistry:
@@ -92,6 +99,8 @@ class ToolRegistry:
         description: str = "",
         schema: dict | None = None,
         write: bool = False,
+        requires_browser: bool = False,
+        browser_ready=None,
     ) -> None:
         if schema is None:
             schema = {
@@ -102,7 +111,7 @@ class ToolRegistry:
                     "parameters": {"type": "object", "properties": {}},
                 },
             }
-        self._tools[name] = _Tool(name, func, schema, write)
+        self._tools[name] = _Tool(name, func, schema, write, requires_browser, browser_ready)
 
     def get(self, name: str) -> _Tool | None:
         return self._tools.get(name)
@@ -311,6 +320,18 @@ def build_agent_graph(*, planner, registry: ToolRegistry, engine, checkpointer=N
                 ]
         return {"approval_result": grants, **extra}
 
+    def _browser_ready() -> bool:
+        """浏览器预检（只做廉价检查，不发探针）：automation 对象和 page 都在才算就绪。
+
+        懒加载断开 graph→tools 的模块环（tools 顶层 import 本模块的 ToolRegistry）。
+        只查对象存在性、不跨线程调 Playwright 方法——页面被关但对象还在的场景交给
+        工具运行时异常 + friendly_error 兜底，预检保持零成本。
+        """
+        from agent.tools import _default_get_automation  # noqa: PLC0415
+
+        a = _default_get_automation()
+        return a is not None and getattr(a, "page", None) is not None
+
     # ── execute_tool：调 ToolRegistry，入参出参落库，结果回灌 trace ──
     def _execute_tool(st: AgentState) -> dict:
         dec = st["decision"]
@@ -323,7 +344,23 @@ def build_agent_graph(*, planner, registry: ToolRegistry, engine, checkpointer=N
             # 白名单供 LLM 修正后重试。
             out: dict = {"error": f"未注册的工具：{name}", "allowed": registry.names()}
         else:
-            out = tool.func(**args)
+            # 浏览器预检：没启动就不进工具——秒返可自愈的引导报错，让 planner 先调
+            # open_browser 再原样重试，而不是让工具跑到一半撞 TargetClosedError。
+            # 探针优先用注册时随工具携带的（与注入 loader 同源），缺省走全局兜底。
+            checker = getattr(tool, "browser_ready", None) or _browser_ready
+            if getattr(tool, "requires_browser", False) and not checker():
+                out = {
+                    "error": "浏览器未启动",
+                    "message": "控制台的自动化浏览器没有在运行（扫码登录≠浏览器已启动，两者独立）。"
+                    "请先调用 open_browser 工具开启浏览器，成功后再原样重试本工具。",
+                }
+            else:
+                try:
+                    out = tool.func(**args)
+                except Exception as e:  # noqa: BLE001 —— 工具运行时异常（浏览器被关/超时等）
+                    # 不炸整个回合：与参数校验失败同模式，error dict 回灌自纠；文案已译成
+                    # 用户能照做的中文（agent/errors.py），LLM 据此向用户转述
+                    out = {"error": friendly_error(e)}
         step_id = _persist_step(
             engine, st["session_id"], state.StepKind.EXECUTE,
             tool_name=name, tool_input=args, tool_output=out,
