@@ -34,6 +34,16 @@ $ lakejob conversations
 
 ---
 
+## 🔗 上游来源
+
+本项目 fork 自开源项目 **[lakejobai-job-radar](https://github.com/lake121380-source/lakejobai-job-radar)**（MIT 协议，原作者 `lakejob` © 2025），在保留其采集/投递/聊天/AI 能力的基础上持续独立演进：Agent 化改造（LangGraph 决策图 + 浏览器工具链）、数据层 SQLAlchemy/Alembic 工程化、Web 控制台筛选勾选投递等。
+
+- 上游原仓库：<https://github.com/lake121380-source/lakejobai-job-radar>
+- 本仓库主页：<https://github.com/123ewk/AI_job_platform>
+- License：[MIT](LICENSE)，保留原作者 `Copyright (c) 2025 lakejob`
+
+---
+
 ## ⚠️ 合规边界
 
 | | 边界 |

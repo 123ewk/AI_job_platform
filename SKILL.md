@@ -5,8 +5,8 @@
 ## Install
 
 ```bash
-git clone https://github.com/longnull-ck/lakejobai-job-radar.git
-cd lakejobai-job-radar
+git clone https://github.com/123ewk/AI_job_platform.git
+cd AI_job_platform
 pip install -e .
 playwright install firefox
 ```
